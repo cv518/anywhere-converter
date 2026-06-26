@@ -12,7 +12,7 @@
 | 模块包含数组 `splice(0)` 这类常见但依赖源数据类型的清理 | `aggressive` | 通常是清空数组，但不是所有输入 JSON 都严格等价，因此需要用户主动开启。 |
 | 模块包含 `$httpClient` / `$task.fetch` | `compat` | 兼容层会映射到 `Anywhere.http.request()`；不应静态原生化成 `body-json`。 |
 | 模块包含 protobuf、binary、YouTube/Bilibili 大脚本 | `compat` + 实机验证或手工转换 | 通用转换器只能保留/标记，不能推断字段级语义。 |
-| 调试“不下载 JS 时能转多少” | `safe` CLI only | 只用于离线诊断，不面向网页普通用户。 |
+| 调试“不下载 JS 时能转多少” | `compat` + `fetchScripts=false` | 只用于离线诊断，不面向网页普通用户。 |
 
 ## Compat Mode
 

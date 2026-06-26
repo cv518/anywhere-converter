@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { convertAnyAsync, validateAnywhereOutput } from "./core.mjs";
+import { convertAnyAsync, validateAnywhereOutput } from "../src/core.mjs";
 
 function parseArgs(argv) {
   const args = {};
@@ -68,7 +68,7 @@ function loadScriptTextOverrides(args) {
 const args = parseArgs(process.argv.slice(2));
 const input = args.input || args._?.[0];
 if (!input) {
-  console.error("Usage: node scratch/converter/cli.mjs --input <module.plugin|sgmodule|ruleset.list> [--source-kind auto|module|ruleset] [--rule-set-routing default|direct|reject] [--out-dir scratch/converter/out] [--json]");
+  console.error("Usage: node bin/cli.mjs --input <module.plugin|sgmodule|ruleset.list> [--source-kind auto|module|ruleset] [--rule-set-routing default|direct|reject] [--out-dir ./out] [--json]");
   process.exit(2);
 }
 

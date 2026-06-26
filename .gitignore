@@ -9,6 +9,7 @@ node_modules/
 out/
 out-*/
 coverage/
+local-verification/
 
 npm-debug.log*
 yarn-debug.log*

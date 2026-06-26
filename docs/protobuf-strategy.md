@@ -20,7 +20,7 @@ The converter recognizes protobuf/binary hints:
 - `Uint8Array`, `ArrayBuffer`, `DataView`
 - `protobuf`, `grpc`, endpoint names in URL patterns
 
-In the standard Worker/UI path these scripts are downloaded or accepted through `scriptTextByURL`, wrapped when possible, and marked with `script-binary-sample-required`. In CLI `safe` diagnostics they are reported without remote fetch.
+In the standard Worker/UI path these scripts are downloaded or accepted through `scriptTextByURL`, wrapped when possible, and marked with `script-binary-sample-required`. When script fetching is disabled for diagnostics, they are reported without remote fetch.
 
 Fixed base64 mocks are converted natively:
 

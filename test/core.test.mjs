@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { convertAny, convertModule, convertModuleAsync, convertRuleSet, validateAnywhereOutput, internals } from "../core.mjs";
+import { convertAny, convertModule, convertModuleAsync, convertRuleSet, validateAnywhereOutput, internals } from "../src/core.mjs";
 
 test("converts stable routing and URL-REGEX reject rules", () => {
   const source = `

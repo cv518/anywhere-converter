@@ -158,7 +158,7 @@ export function convertModule(source, options = {}) {
         }
       } else {
         skipped += 1;
-        addDiagnostic("info", mapped?.code || "script-skipped", mapped?.message || "脚本规则已识别；safe 模式默认不下载远程脚本，启用 fetchScripts 后可用兼容层保留。", item.line, item.raw);
+        addDiagnostic("info", mapped?.code || "script-skipped", mapped?.message || "脚本规则已识别；当前未下载远程脚本，启用 fetchScripts 后可用兼容层保留。", item.line, item.raw);
       }
       break;
     }
@@ -1051,7 +1051,7 @@ function convertScriptLine(item, options) {
   const diagnostics = [];
   const source = parsed.inlineScript || (parsed.path ? options.scriptTextByURL?.[parsed.path] : "");
   if (!options.fetchScripts && !source) {
-    return { code: "script-fetch-disabled", message: "脚本规则已识别；safe 模式默认不下载远程脚本，启用 fetchScripts 后可用兼容层保留。" };
+    return { code: "script-fetch-disabled", message: "脚本规则已识别；当前未下载远程脚本，启用 fetchScripts 后可用兼容层保留。" };
   }
   if (!source) return { code: "script-source-missing", message: "脚本没有可用 source；请开启脚本下载或提供 scriptTextByURL。" };
   if (options.jsLift !== false) {

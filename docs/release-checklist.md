@@ -7,7 +7,7 @@ Use this checklist before publishing the converter as a standalone repository.
 - Keep `node_modules/`, `.wrangler/`, `out-*`, and generated scratch outputs out of git.
 - Keep `package-lock.json` committed so CI and Worker deploys are reproducible.
 - Keep `LICENSE` aligned with the Anywhere project license.
-- Public CI runs `npm test`; deeper M4/golden gates require the companion fixture workspace.
+- Public CI runs `npm test`.
 
 ## Worker
 
@@ -19,12 +19,10 @@ Use this checklist before publishing the converter as a standalone repository.
 ## Verification
 
 - Run `npm test`.
-- Run syntax checks for `core.mjs`, `worker.mjs`, `ui.mjs`, and `cli.mjs`.
-- In the internal fixture workspace, run `npm run m4:verify -- --json`.
+- Run syntax checks for `src/core.mjs`, `src/worker.mjs`, `src/ui.mjs`, and `bin/cli.mjs`.
 - Smoke test the Worker UI with a remote module URL and a standalone rule-set URL.
 
 ## Boundaries
 
 - Do not add app-specific protobuf or large bundle behavior to the generic converter without samples and explicit recipes.
-- Do not treat hand-converted modules as output templates; use them as behavior validation oracles.
 - Keep source-specific rule-library cleanup, such as marker-domain filtering, in rule-library build jobs rather than the generic online converter.

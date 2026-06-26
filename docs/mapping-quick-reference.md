@@ -104,7 +104,7 @@ Status:
 | --- | --- | --- | --- |
 | remote response script, standard UI path | `1, 100, pattern, base64(process)` or native lift | partial | Remote scripts are fetched by default. |
 | remote response script, aggressive UI path | native lift when URL-guarded JSON mutation is static | partial | Opt-in; keeps protobuf/binary/dynamic/helper-call logic out of native lift. |
-| remote response script, CLI safe diagnostics | skipped with diagnostics | partial | Offline/native-only diagnostics. |
+| remote response script, `fetchScripts=false` diagnostics | skipped with diagnostics | partial | Offline/native-only diagnostics. |
 | same phase + same pattern scripts | merged dispatcher | partial | Preserves order for exact same gate. |
 | same phase + different patterns | gated dispatcher over union pattern | partial | Each wrapped script runs only when its original pattern matches. |
 | request script mutating URL/header/method | blocked | blocked | Must be lifted to native rewrite/header. |
