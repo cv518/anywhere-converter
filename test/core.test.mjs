@@ -445,9 +445,12 @@ hostname = api.example.com
   const amrs = result.files.find((file) => file.type === "amrs");
   const deleteHeaders = amrs.content.split("\n").filter((line) => line.startsWith("0, 2,"));
   const addHeaders = amrs.content.split("\n").filter((line) => line.startsWith("0, 1,"));
-  assert.equal(deleteHeaders.length, 1);
+  assert.equal(deleteHeaders.length, 3);
   assert.equal(addHeaders.length, 1);
-  assert.match(deleteHeaders[0], /\^https:\/\/api\\\.example\\\.com\/\(\?:a\|b\)/);
+  assert(deleteHeaders.some((line) => line.includes("accept-encoding")));
+  assert(deleteHeaders.some((line) => line.includes("if-none-match")));
+  assert(deleteHeaders.some((line) => line.includes("if-modified-since")));
+  assert(deleteHeaders.every((line) => /\^https:\/\/api\\\.example\\\.com\/\(\?:a\|b\)/.test(line)));
   assert(result.diagnostics.some((item) => item.code === "generated-header-merged"));
   assert.deepEqual(validateAnywhereOutput(amrs), []);
 });
@@ -475,6 +478,27 @@ hostname = api.example.com
   assert.match(wrapped, /function __anywhere_part_0/);
   assert.match(wrapped, /function __anywhere_part_1/);
   assert(result.diagnostics.some((item) => item.code === "script-merged"));
+  assert.deepEqual(validateAnywhereOutput(amrs), []);
+});
+
+test("response scripts requiring body remove conditional cache headers", async () => {
+  const source = `
+#!name = Response Body Script Cache Mini
+[Script]
+http-response ^https:\\/\\/api\\.example\\.com\\/profile script-path=https://example.com/profile.js, requires-body=true
+[MITM]
+hostname = api.example.com
+`;
+  const result = await convertModuleAsync(source, {
+    fetchScripts: true,
+    fetchText: async () => "$done({ body: $response.body })",
+  });
+  const amrs = result.files.find((file) => file.type === "amrs");
+  const lines = amrs.content.split("\n");
+  assert(lines.some((line) => line.startsWith("0, 2,") && line.includes("accept-encoding")));
+  assert(lines.some((line) => line.startsWith("0, 1,") && line.includes("accept-encoding, identity")));
+  assert(lines.some((line) => line.startsWith("0, 2,") && line.includes("if-none-match")));
+  assert(lines.some((line) => line.startsWith("0, 2,") && line.includes("if-modified-since")));
   assert.deepEqual(validateAnywhereOutput(amrs), []);
 });
 

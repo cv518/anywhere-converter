@@ -41,7 +41,7 @@ export function convertModule(source, options = {}) {
   let mitmRules = [];
   const routingGroups = new Map();
   const inferredHosts = new Set();
-  const identityPreprocess = new Set();
+  const headerPreprocess = new Set();
   let converted = 0;
   let skipped = 0;
 
@@ -51,12 +51,13 @@ export function convertModule(source, options = {}) {
 
   const addMitm = (rule, line, sourceLine) => {
     rule = normalizeMitmRulePattern(rule);
-    if (needsIdentityPreprocess(rule)) {
-      const key = rule.pattern;
-      if (!identityPreprocess.has(key)) {
-        identityPreprocess.add(key);
-        mitmRules.push({ phase: 0, op: 2, pattern: rule.pattern, fields: ["accept-encoding"], generated: true });
-        mitmRules.push({ phase: 0, op: 1, pattern: rule.pattern, fields: ["accept-encoding", "identity"], generated: true });
+    if (needsResponseBodyPreprocess(rule)) {
+      for (const generatedRule of responseBodyPreprocessRules(rule.pattern)) {
+        const key = `${generatedRule.pattern}\u001f${generatedRule.op}\u001f${generatedRule.fields.join("\u001f")}`;
+        if (!headerPreprocess.has(key)) {
+          headerPreprocess.add(key);
+          mitmRules.push(generatedRule);
+        }
       }
     }
     mitmRules.push(rule);
@@ -1101,7 +1102,7 @@ function convertScriptLine(item, options) {
   const wrapped = wrapLoonSurgeScript(source, parsed);
   diagnostics.push({ level: "warning", code: "script-compat-layer", message: "脚本已用轻量 Loon/Surge 兼容层包装；复杂网络请求、二进制/protobuf 或平台 API 仍需实机验证。" });
   return {
-    rule: { phase: parsed.phase, op: 100, pattern: urlGate(parsed.pattern), fields: [base64(wrapped)], scriptSource: wrapped },
+    rule: { phase: parsed.phase, op: 100, pattern: urlGate(parsed.pattern), fields: [base64(wrapped)], scriptSource: wrapped, requiresBody: parsed.requiresBody },
     diagnostics,
   };
 }
@@ -2815,7 +2816,7 @@ function mergeGeneratedHeaderPreprocessRules(rules, diagnostics) {
     diagnostics.push({
       level: "info",
       code: "generated-header-merged",
-      message: `已合并 ${group.length} 条自动 accept-encoding 预处理 header 规则。`,
+      message: `已合并 ${group.length} 条自动响应体预处理 header 规则。`,
       line: 0,
       source: "",
     });
@@ -3266,8 +3267,17 @@ function isHighRiskPattern(pattern) {
   return /(grpc|protobuf|youtubei\/v1\/(?:browse|next|player)|feed\/index|homefeed|viewunite|playurl|reply\/mainlist)/i.test(pattern);
 }
 
-function needsIdentityPreprocess(rule) {
+function needsResponseBodyPreprocess(rule) {
   return rule.phase === 1 && (rule.op === 4 || rule.op === 5 || rule.op === 100);
+}
+
+function responseBodyPreprocessRules(pattern) {
+  return [
+    { phase: 0, op: 2, pattern, fields: ["accept-encoding"], generated: true },
+    { phase: 0, op: 1, pattern, fields: ["accept-encoding", "identity"], generated: true },
+    { phase: 0, op: 2, pattern, fields: ["if-none-match"], generated: true },
+    { phase: 0, op: 2, pattern, fields: ["if-modified-since"], generated: true },
+  ];
 }
 
 export const internals = {
