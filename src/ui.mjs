@@ -1042,6 +1042,7 @@ $done({ body: JSON.stringify(obj) });\`;
         "script-compat-layer": "兼容层脚本",
         "script-node-require-branch": "脚本含 require 分支",
         "script-http-client": "脚本含外部请求",
+        "script-argument-unused": "脚本未使用参数",
         "script-large": "脚本体积较大",
         "script-fetch-failed": "脚本下载失败",
         "script-source-missing": "缺少脚本源码",

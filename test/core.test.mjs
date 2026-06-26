@@ -642,6 +642,25 @@ hostname = api.example.com
   assert.deepEqual(validateAnywhereOutput(amrs), []);
 });
 
+test("warns when script arguments are declared but source does not read argument", async () => {
+  const source = `
+#!name = Unused Script Argument Mini
+[Argument]
+create=switch, false
+[Script]
+http-response ^https:\\/\\/api\\.example\\.com\\/config script-path=https://example.com/no-arg.js, requires-body=true, argument={create}
+[MITM]
+hostname = api.example.com
+`;
+  const result = await convertModuleAsync(source, {
+    fetchScripts: true,
+    fetchText: async () => "const obj = JSON.parse($response.body); obj.ok = true; $done({ body: JSON.stringify(obj) });",
+  });
+  assert(result.diagnostics.some((item) => item.code === "script-argument-unused"));
+  const amrs = result.files.find((file) => file.type === "amrs");
+  assert.deepEqual(validateAnywhereOutput(amrs), []);
+});
+
 test("lifts simple JSON mutation scripts to native body-json", async () => {
   const source = `
 #!name = JS Lift JSON Mini

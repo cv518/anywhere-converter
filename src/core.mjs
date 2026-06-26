@@ -1169,6 +1169,9 @@ function scanScriptRisk(source, parsed, rawLine) {
   if (/\$httpClient\b|\$task\s*\.\s*fetch\b|\.request\s*\(/.test(source)) {
     diagnostics.push({ level: "warning", code: "script-http-client", message: "脚本使用外部 HTTP 请求，会 park 当前连接并受 Anywhere.http 预算/超时限制。" });
   }
+  if (parsed.argument && !/\$argument\b/.test(codeWithoutStrings)) {
+    diagnostics.push({ level: "warning", code: "script-argument-unused", message: "规则声明了脚本参数，但源码没有读取 $argument；对应参数开关可能不会影响脚本行为。" });
+  }
   if (parsed.binaryBodyMode || /protobuf|Uint8Array|ArrayBuffer|DataView/i.test(source) || /binary-body-mode\s*=\s*1/i.test(rawLine)) {
     diagnostics.push({ level: "warning", code: "script-binary-sample-required", message: "脚本涉及二进制/protobuf，已保留但需要样本和实机验证。" });
   }
