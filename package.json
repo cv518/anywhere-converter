@@ -1,0 +1,26 @@
+{
+  "name": "anywhere-loon-surge-converter",
+  "version": "0.1.0",
+  "description": "Loon/Surge plugin, module, and rule-set converter for Anywhere.",
+  "license": "GPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/core.test.mjs",
+    "golden": "node compare-golden.mjs",
+    "golden:functional": "node functional-golden-report.mjs",
+    "cross-check": "node compare-external.mjs",
+    "cross-check:report": "node cross-check-report.mjs",
+    "cross-check:module2anywhere": "node cross-check-report.mjs --module2anywhere-bin ../external/module2anywhere/bin/module2anywhere --write docs/cross-check-report.md",
+    "m4:verify": "node m4-verify.mjs --write docs/m4-convergence.md",
+    "progress": "node progress-report.mjs",
+    "progress:compat": "node progress-report.mjs --fetch-scripts true",
+    "progress:safe": "node progress-report.mjs --safe true",
+    "convert": "node cli.mjs",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
