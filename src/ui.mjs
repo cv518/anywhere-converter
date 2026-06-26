@@ -559,6 +559,7 @@ export function renderHome() {
             <div class="actions">
               <button class="btn primary" id="submit" type="submit">${icon("wand")}转换</button>
               <a class="btn" id="import" hidden>${icon("phone")}导入 Anywhere</a>
+              <button class="btn" id="refresh-cache" type="button" disabled title="重新生成动态订阅链接，绕过 Worker 缓存">${icon("refresh")}刷新缓存</button>
               <button class="btn" id="copy-file" type="button" disabled>${icon("copy")}复制文件</button>
               <button class="btn" id="copy-json" type="button" disabled>${icon("copy")}复制 JSON</button>
             </div>
@@ -601,6 +602,7 @@ export function renderHome() {
     const addScriptButton = document.querySelector("#add-script");
     const statusEl = document.querySelector("#status");
     const importLink = document.querySelector("#import");
+    const refreshCache = document.querySelector("#refresh-cache");
     const copyFile = document.querySelector("#copy-file");
     const copyJson = document.querySelector("#copy-json");
     const signalsEl = document.querySelector("#signals");
@@ -618,6 +620,7 @@ export function renderHome() {
     let currentFile = null;
     let activeDiagnosticFilter = "action";
     let inspectTimer = 0;
+    let cacheBustValue = "";
 
     const sampleSource = String.raw\`#!name=Demo Ad Cleanup
 #!desc=最小转换示例
@@ -683,6 +686,8 @@ $done({ body: JSON.stringify(obj) });\`;
       lastJson = null;
       currentFile = null;
       importLink.hidden = true;
+      refreshCache.disabled = true;
+      cacheBustValue = "";
       copyFile.disabled = true;
       copyJson.disabled = true;
       scriptOverridesEl.replaceChildren();
@@ -711,12 +716,18 @@ $done({ body: JSON.stringify(obj) });\`;
       preview.textContent = currentFile.name + " 已复制到剪贴板。\\n\\n" + currentFile.content;
     });
 
+    refreshCache.addEventListener("click", () => {
+      cacheBustValue = String(Date.now());
+      form.requestSubmit();
+    });
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       submit.disabled = true;
       copyFile.disabled = true;
       copyJson.disabled = true;
       importLink.hidden = true;
+      refreshCache.disabled = true;
       currentFile = null;
       signalsEl.replaceChildren(chip("converting"));
       filesEl.replaceChildren();
@@ -743,6 +754,7 @@ $done({ body: JSON.stringify(obj) });\`;
             arguments: argumentOverrides,
             scriptTextByURL: collectScriptTextByURL(),
             fetchScripts: raw.fetchScripts === "true",
+            cacheBust: cacheBustValue,
             includeContent: true,
             includeSource: true,
           }),
@@ -750,6 +762,7 @@ $done({ body: JSON.stringify(obj) });\`;
         const json = await response.json();
         if (!response.ok) throw new Error((json.detail || json.error || "convert failed"));
         lastJson = json;
+        if (cacheBustValue) cacheBustValue = "";
         renderResult(json);
       } catch (error) {
         lastJson = null;
@@ -786,6 +799,7 @@ $done({ body: JSON.stringify(obj) });\`;
         signalsEl.append(chip(text));
       };
       appendSignal(json.dynamicImportUrl ? "动态订阅" : "快照链接");
+      if ((json.dynamicFiles || []).some((file) => /[?&]cacheBust=/.test(file.url || ""))) appendSignal("已刷新缓存");
       if (json.sourceKind === "ruleset") appendSignal("规则集");
       if (summary.validationErrors) appendSignal("验证错误 " + summary.validationErrors);
       if (summary.nativeLiftCount) appendSignal("JS 原生化 " + summary.nativeLiftCount);
@@ -826,6 +840,7 @@ $done({ body: JSON.stringify(obj) });\`;
         importLink.href = json.importUrl;
         importLink.hidden = false;
       }
+      refreshCache.disabled = !json.dynamicImportUrl;
 
       renderArgumentDefinitions(json.argumentDefinitions || {}, json.arguments || {});
       const firstFile = (json.files || []).find((file) => file.content);
@@ -1332,7 +1347,7 @@ $done({ body: JSON.stringify(obj) });\`;
 </html>`;
 }
 
-function icon(name) {
+    function icon(name) {
   const icons = {
     "file-plus": '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="none" stroke="currentColor" stroke-width="2"/><path d="M14 2v6h6M12 18v-6M9 15h6" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
     trash: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 16h10l1-16M10 11v6M14 11v6" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
@@ -1341,5 +1356,5 @@ function icon(name) {
     copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h11v11H8zM5 16H4a1 1 0 0 1-1-1V4h11a1 1 0 0 1 1 1v1" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
     sliders: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M2 14h4M10 8h4M18 16h4" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
   };
-  return icons[name] || "";
-}
+    return icons[name] || "";
+  }

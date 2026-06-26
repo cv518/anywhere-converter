@@ -14,7 +14,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/health") return jsonResponse({
       ok: true,
       version: "0.1.0",
-      capabilities: ["url-input", "text-input", "argument-form", "script-fetch", "script-recovery", "native-js-lift", "aggressive-js-lift", "ruleset-conversion", "dynamic-subscription", "fallback-snapshot"],
+      capabilities: ["url-input", "text-input", "argument-form", "script-fetch", "script-recovery", "native-js-lift", "aggressive-js-lift", "ruleset-conversion", "dynamic-subscription", "cache-bust-refresh", "fallback-snapshot"],
     });
     if (request.method === "POST" && url.pathname === "/api/inspect") {
       const limited = await rateLimit(request, env, "inspect");
@@ -218,6 +218,7 @@ async function handleDynamicDeeplink(request, env) {
     sourceKind: converted.sourceKind,
     ruleSetRouting: converted.ruleSetRouting,
     mode: converted.mode,
+    cacheBust: converted.cacheBust,
   }, {});
   if (!dynamic.importUrl) return textResponse("Error: no rules to import", 404);
 
@@ -247,6 +248,7 @@ async function convertFromDynamicQuery(request, env) {
   const sourceKind = normalizeInputSourceKind(url.searchParams.get("sourceKind"), fetched.source);
   const ruleSetRouting = normalizeRuleSetRoutingParam(url.searchParams.get("ruleSetRouting")) || "default";
   const args = argumentsFromSearchParams(url.searchParams);
+  const cacheBust = normalizeCacheBust(url.searchParams.get("cacheBust") || url.searchParams.get("_"));
   const result = await convertAnyAsync(fetched.source, {
     name,
     mode,
@@ -271,6 +273,7 @@ async function convertFromDynamicQuery(request, env) {
     ruleSetRouting: result.ruleSetRouting,
     fetchScripts,
     arguments: args,
+    cacheBust,
   };
 }
 
@@ -303,7 +306,7 @@ function dynamicLinksForResult(request, result, input, scriptTextByURL) {
   const base = new URL(request.url);
   const requestedKind = String(input.sourceKind || "").toLowerCase();
   const sourceKind = requestedKind && requestedKind !== "auto" ? requestedKind : result.sourceKind;
-  const query = dynamicSearchParams(sourceUrl, input.name || "", input.arguments || {}, input.fetchScripts, input.mode, sourceKind, input.ruleSetRouting ?? result.ruleSetRouting);
+  const query = dynamicSearchParams(sourceUrl, input.name || "", input.arguments || {}, input.fetchScripts, input.mode, sourceKind, input.ruleSetRouting ?? result.ruleSetRouting, input.cacheBust);
   const files = [];
   for (const file of result.files || []) {
     const path = dynamicPathForFile(file);
@@ -327,7 +330,7 @@ function dynamicPathForFile(file) {
   return "/sub/rule.arrs";
 }
 
-function dynamicSearchParams(sourceUrl, name, args, fetchScripts, mode, sourceKind, ruleSetRouting) {
+function dynamicSearchParams(sourceUrl, name, args, fetchScripts, mode, sourceKind, ruleSetRouting, cacheBust) {
   const params = new URLSearchParams();
   params.set("url", sourceUrl);
   if (name) params.set("name", name);
@@ -337,11 +340,18 @@ function dynamicSearchParams(sourceUrl, name, args, fetchScripts, mode, sourceKi
   if (normalizedSourceKind === "ruleset" || normalizedSourceKind === "rule-set") params.set("sourceKind", "ruleset");
   const routing = normalizeRuleSetRoutingParam(ruleSetRouting);
   if (routing) params.set("ruleSetRouting", routing);
+  const bust = normalizeCacheBust(cacheBust);
+  if (bust) params.set("cacheBust", bust);
   for (const [key, value] of Object.entries(args || {})) {
     if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(key)) continue;
     params.set(`argument.${key}`, String(value));
   }
   return params;
+}
+
+function normalizeCacheBust(value) {
+  const text = String(value ?? "").trim();
+  return /^[A-Za-z0-9._:-]{1,80}$/.test(text) ? text : "";
 }
 
 function argumentsFromSearchParams(params) {
