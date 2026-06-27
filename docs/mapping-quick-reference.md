@@ -56,9 +56,9 @@ Status:
 | `reject-array` | `0, 0, pattern, 2, []` | stable | Fixed JSON array. |
 | `reject-img` | `0, 0, pattern, 3` | stable | 1x1 GIF. |
 | image-like `reject` | `0, 0, pattern, 3` | partial | Uses conservative image/material path heuristics. |
-| `302 <url>` | `0, 0, pattern, 1, url` | stable | Synthetic 302. |
+| `302 <url>` | `0, 0, pattern, 1, url` | stable | Synthetic 302. `$1` / `${10}` capture templates are preserved. |
 | `307 <url>` | `0, 0, pattern, 1, url` | partial | Downgraded to 302. |
-| transparent URL rewrite | `0, 0, pattern, 0, url` | partial | Capture semantics depend on Anywhere runtime. |
+| transparent URL rewrite | `0, 0, pattern, 0, url` | stable | Native transparent rewrite. `$1` / `${10}` capture templates are preserved. |
 | `mock-response-body data=...` | `0, 0, pattern, 2, data` | stable | Non-200 status is not emitted as native rewrite. |
 | `mock-response-body data-type=base64` | `0, 0, pattern, 4, base64` | stable | Useful for fixed binary/gRPC mock. |
 

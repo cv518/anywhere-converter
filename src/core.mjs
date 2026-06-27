@@ -923,7 +923,6 @@ function convertRewriteLine(item) {
   if (action === "302" || action === "redirect" || action === "redirect-302") {
     const target = rest.join(" ").trim();
     if (!target) return null;
-    if (hasCaptureReference(target)) return requestCaptureRedirectScriptRule(pattern, target);
     return { phase: 0, op: 0, pattern: urlGate(pattern), fields: ["1", target] };
   }
   if (action === "307" || action === "redirect-307") {
@@ -935,15 +934,12 @@ function convertRewriteLine(item) {
   if (action === "url" || action === "rewrite" || action === "header") {
     const target = rest.join(" ").trim();
     if (!target) return null;
-    if (hasCaptureReference(target)) return requestCaptureProxyScriptRule(pattern, target);
     return { phase: 0, op: 0, pattern: urlGate(pattern), fields: ["0", target] };
   }
   if (rest.length === 1 && rest[0].toLowerCase() === "header") {
-    if (hasCaptureReference(actionMarker)) return requestCaptureProxyScriptRule(pattern, actionMarker);
     return { phase: 0, op: 0, pattern: urlGate(pattern), fields: ["0", actionMarker] };
   }
   if (rest.length === 1 && /^(?:302|redirect|redirect-302)$/i.test(rest[0])) {
-    if (hasCaptureReference(actionMarker)) return requestCaptureRedirectScriptRule(pattern, actionMarker);
     return { phase: 0, op: 0, pattern: urlGate(pattern), fields: ["1", actionMarker] };
   }
   if (rest.length === 1 && /^(?:307|redirect-307)$/i.test(rest[0])) {
@@ -2766,46 +2762,6 @@ function rejectContentForAction(rawAction = "", pattern = "") {
 
 function hasCaptureReference(value) {
   return /\$(?:\d|\{\d+\})/.test(String(value || ""));
-}
-
-function requestCaptureProxyScriptRule(pattern, targetTemplate) {
-  const script = captureTemplatePrelude(pattern, targetTemplate) + `
-  if (!/^https?:\\/\\//i.test(target)) return;
-  var headers = [];
-  (ctx.headers || []).forEach(function (header) {
-    var name = String(header[0] || "");
-    var lower = name.toLowerCase();
-    if (!name || lower === "host" || lower === "content-length" || lower === "connection" || lower === "transfer-encoding" || lower === "accept-encoding") return;
-    headers.push([name, String(header[1] || "")]);
-  });
-  headers.push(["accept-encoding", "identity"]);
-  function responseHeaders(input) {
-    var out = [];
-    (input || []).forEach(function (header) {
-      var name = String(header[0] || "");
-      var lower = name.toLowerCase();
-      if (!name || lower === "content-length" || lower === "content-encoding" || lower === "transfer-encoding" || lower === "connection" || lower === "keep-alive" || lower === "upgrade" || lower === "proxy-connection" || lower === "te" || lower === "trailer") return;
-      out.push([name, String(header[1] || "")]);
-    });
-    return out;
-  }
-  try {
-    var res = await Anywhere.http.request({
-      url: target,
-      method: ctx.method || "GET",
-      headers: headers,
-      body: ctx.body,
-      timeout: 8000,
-      redirect: "follow"
-    });
-    Anywhere.respond({
-      status: res.status || 200,
-      headers: responseHeaders(res.headers),
-      body: res.body || new Uint8Array()
-    });
-  } catch (_) {}
-}`;
-  return { phase: 0, op: 100, pattern: urlGate(pattern), fields: [base64(script)], scriptSource: script, noScriptMerge: true };
 }
 
 function requestCaptureRedirectScriptRule(pattern, targetTemplate, status = 302) {

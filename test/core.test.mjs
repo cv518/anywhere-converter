@@ -238,11 +238,11 @@ test("converts trailing header URL rewrite syntax", () => {
 hostname = api.example.com
 `);
   const amrs = result.files.find((file) => file.type === "amrs");
-  const line = amrs.content.split("\n").find((item) => item.startsWith("0, 100,"));
+  const line = amrs.content.split("\n").find((item) => item.startsWith("0, 0,"));
   assert(line);
-  const script = Buffer.from(internals.parseCsv(line)[3], "base64").toString("utf8");
-  assert.match(script, /Anywhere\.http\.request/);
-  assert(script.includes("https://api.example.com/artist/$1&platform=ipad"));
+  const fields = internals.parseCsv(line);
+  assert.equal(fields[3], "0");
+  assert.equal(fields[4], "https://api.example.com/artist/$1&platform=ipad");
   assert.equal(result.report.skipped, 0);
   assert.deepEqual(validateAnywhereOutput(amrs), []);
 });
@@ -313,20 +313,17 @@ hostname = api.revenuecat.com
   assert.equal(result.argumentDefinitions.Mock.defaultValue, "https://mock.example/reven");
   assert.equal(result.arguments.Mock, "https://mock.example/reven");
   const amrs = result.files.find((file) => file.type === "amrs");
-  const scriptLine = amrs.content.split("\n").find((line) => line.startsWith("0, 100,"));
-  assert(scriptLine);
-  const script = Buffer.from(internals.parseCsv(scriptLine)[3], "base64").toString("utf8");
-  assert.match(script, /https:\/\/mock\.example\/reven\/\$1/);
-  assert.match(script, /Anywhere\.http\.request/);
-  assert.match(script, /template\.replace/);
-  assert.match(script, /\["accept-encoding", "identity"\]/);
-  assert.match(script, /responseHeaders\(res\.headers\)/);
-  assert.match(script, /content-encoding/);
+  assert.doesNotMatch(amrs.content, /^0, 100,/m);
+  const line = amrs.content.split("\n").find((item) => item.startsWith("0, 0,"));
+  assert(line);
+  const fields = internals.parseCsv(line);
+  assert.equal(fields[3], "0");
+  assert.equal(fields[4], "https://mock.example/reven/$1");
   assert.doesNotMatch(amrs.content, /\{\{\{Mock\}\}\}/);
   assert.deepEqual(validateAnywhereOutput(amrs), []);
 });
 
-test("capture proxy rewrite forwards body and sanitizes proxy response headers", async () => {
+test("capture header rewrite stays native transparent rewrite", () => {
   const source = `
 #!name=Reven
 #!arguments=Mock:"https://mock.example/reven"
@@ -337,56 +334,16 @@ hostname = api.revenuecat.com, api.rc-backup.com
 `;
   const result = convertModule(source);
   const amrs = result.files.find((file) => file.type === "amrs");
-  const scriptLine = amrs.content.split("\n").find((line) => line.startsWith("0, 100,"));
-  const script = Buffer.from(internals.parseCsv(scriptLine)[3], "base64").toString("utf8");
-  const seen = {};
-  const Anywhere = {
-    http: {
-      request: async (request) => {
-        seen.request = request;
-        return {
-          status: 200,
-          headers: [
-            ["content-type", "application/json"],
-            ["content-length", "999"],
-            ["content-encoding", "gzip"],
-            ["x-author", "tester"],
-          ],
-          body: new Uint8Array([123, 125]),
-        };
-      },
-    },
-    respond: (response) => {
-      seen.response = response;
-    },
-  };
-  const body = new Uint8Array([1, 2, 3]);
-  await new Function("Anywhere", "ctx", `${script}; return process(ctx);`)(Anywhere, {
-    phase: "request",
-    method: "POST",
-    url: "https://api.revenuecat.com/v1/receipts",
-    headers: [
-      ["authorization", "Bearer token"],
-      ["content-length", "3"],
-      ["accept-encoding", "gzip"],
-    ],
-    body,
-  });
-  assert.equal(seen.request.url, "https://mock.example/reven/api.revenuecat.com/v1/receipts");
-  assert.equal(seen.request.method, "POST");
-  assert.equal(seen.request.body, body);
-  assert.deepEqual(seen.request.headers, [
-    ["authorization", "Bearer token"],
-    ["accept-encoding", "identity"],
-  ]);
-  assert.deepEqual(seen.response.headers, [
-    ["content-type", "application/json"],
-    ["x-author", "tester"],
-  ]);
-  assert.deepEqual([...seen.response.body], [123, 125]);
+  assert.doesNotMatch(amrs.content, /^0, 100,/m);
+  const line = amrs.content.split("\n").find((item) => item.startsWith("0, 0,"));
+  assert(line);
+  const fields = internals.parseCsv(line);
+  assert.equal(fields[3], "0");
+  assert.equal(fields[4], "https://mock.example/reven/$1/$2");
+  assert.deepEqual(validateAnywhereOutput(amrs), []);
 });
 
-test("converts capture redirect rewrites to request scripts", () => {
+test("converts capture redirect rewrites to native redirect templates", () => {
   const source = `
 #!name = Capture Redirect Mini
 [URL Rewrite]
@@ -396,12 +353,12 @@ hostname = old.example.com
 `;
   const result = convertModule(source);
   const amrs = result.files.find((file) => file.type === "amrs");
-  const scriptLine = amrs.content.split("\n").find((line) => line.startsWith("0, 100,"));
-  assert(scriptLine);
-  const script = Buffer.from(internals.parseCsv(scriptLine)[3], "base64").toString("utf8");
-  assert.match(script, /status: 302/);
-  assert.match(script, /location/);
-  assert(script.includes("https://new.example.com/view/$1"));
+  assert.doesNotMatch(amrs.content, /^0, 100,/m);
+  const line = amrs.content.split("\n").find((item) => item.startsWith("0, 0,"));
+  assert(line);
+  const fields = internals.parseCsv(line);
+  assert.equal(fields[3], "1");
+  assert.equal(fields[4], "https://new.example.com/view/$1");
   assert.deepEqual(validateAnywhereOutput(amrs), []);
 });
 
