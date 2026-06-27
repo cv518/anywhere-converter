@@ -1429,9 +1429,20 @@ function liftRequestUrlProxyScript(source, parsed) {
   (ctx.headers || []).forEach(function (header) {
     var name = String(header[0] || "");
     var lower = name.toLowerCase();
-    if (!name || lower === "host" || lower === "content-length" || lower === "connection") return;
+    if (!name || lower === "host" || lower === "content-length" || lower === "connection" || lower === "transfer-encoding" || lower === "accept-encoding") return;
     headers.push([name, String(header[1] || "")]);
   });
+  headers.push(["accept-encoding", "identity"]);
+  function responseHeaders(input) {
+    var out = [];
+    (input || []).forEach(function (header) {
+      var name = String(header[0] || "");
+      var lower = name.toLowerCase();
+      if (!name || lower === "content-length" || lower === "content-encoding" || lower === "transfer-encoding" || lower === "connection" || lower === "keep-alive" || lower === "upgrade" || lower === "proxy-connection" || lower === "te" || lower === "trailer") return;
+      out.push([name, String(header[1] || "")]);
+    });
+    return out;
+  }
   try {
     var res = await Anywhere.http.request({
       url: target,
@@ -1443,7 +1454,7 @@ function liftRequestUrlProxyScript(source, parsed) {
     });
     Anywhere.respond({
       status: res.status || 200,
-      headers: res.headers || [],
+      headers: responseHeaders(res.headers),
       body: res.body || new Uint8Array()
     });
   } catch (_) {}
@@ -2764,9 +2775,20 @@ function requestCaptureProxyScriptRule(pattern, targetTemplate) {
   (ctx.headers || []).forEach(function (header) {
     var name = String(header[0] || "");
     var lower = name.toLowerCase();
-    if (!name || lower === "host" || lower === "content-length" || lower === "connection") return;
+    if (!name || lower === "host" || lower === "content-length" || lower === "connection" || lower === "transfer-encoding" || lower === "accept-encoding") return;
     headers.push([name, String(header[1] || "")]);
   });
+  headers.push(["accept-encoding", "identity"]);
+  function responseHeaders(input) {
+    var out = [];
+    (input || []).forEach(function (header) {
+      var name = String(header[0] || "");
+      var lower = name.toLowerCase();
+      if (!name || lower === "content-length" || lower === "content-encoding" || lower === "transfer-encoding" || lower === "connection" || lower === "keep-alive" || lower === "upgrade" || lower === "proxy-connection" || lower === "te" || lower === "trailer") return;
+      out.push([name, String(header[1] || "")]);
+    });
+    return out;
+  }
   try {
     var res = await Anywhere.http.request({
       url: target,
@@ -2778,7 +2800,7 @@ function requestCaptureProxyScriptRule(pattern, targetTemplate) {
     });
     Anywhere.respond({
       status: res.status || 200,
-      headers: res.headers || [],
+      headers: responseHeaders(res.headers),
       body: res.body || new Uint8Array()
     });
   } catch (_) {}

@@ -201,6 +201,9 @@ $done({ url });
   const generated = Buffer.from(fields[3], "base64").toString("utf8");
   assert.match(generated, /Anywhere\.http\.request/);
   assert.match(generated, /Anywhere\.respond/);
+  assert.match(generated, /\["accept-encoding", "identity"\]/);
+  assert.match(generated, /responseHeaders\(res\.headers\)/);
+  assert.match(generated, /content-encoding/);
   assert(result.diagnostics.some((item) => item.code === "script-url-proxy-lift"));
   assert.deepEqual(validateAnywhereOutput(amrs), []);
 });
@@ -316,8 +319,71 @@ hostname = api.revenuecat.com
   assert.match(script, /https:\/\/mock\.example\/reven\/\$1/);
   assert.match(script, /Anywhere\.http\.request/);
   assert.match(script, /template\.replace/);
+  assert.match(script, /\["accept-encoding", "identity"\]/);
+  assert.match(script, /responseHeaders\(res\.headers\)/);
+  assert.match(script, /content-encoding/);
   assert.doesNotMatch(amrs.content, /\{\{\{Mock\}\}\}/);
   assert.deepEqual(validateAnywhereOutput(amrs), []);
+});
+
+test("capture proxy rewrite forwards body and sanitizes proxy response headers", async () => {
+  const source = `
+#!name=Reven
+#!arguments=Mock:"https://mock.example/reven"
+[URL Rewrite]
+^https:\\/\\/(api\\.revenuecat\\.com|api\\.rc-backup\\.com)\\/(.+\\/(?:receipts|subscribers\\/[^/]+))$ {{{Mock}}}/$1/$2 header
+[MITM]
+hostname = api.revenuecat.com, api.rc-backup.com
+`;
+  const result = convertModule(source);
+  const amrs = result.files.find((file) => file.type === "amrs");
+  const scriptLine = amrs.content.split("\n").find((line) => line.startsWith("0, 100,"));
+  const script = Buffer.from(internals.parseCsv(scriptLine)[3], "base64").toString("utf8");
+  const seen = {};
+  const Anywhere = {
+    http: {
+      request: async (request) => {
+        seen.request = request;
+        return {
+          status: 200,
+          headers: [
+            ["content-type", "application/json"],
+            ["content-length", "999"],
+            ["content-encoding", "gzip"],
+            ["x-author", "tester"],
+          ],
+          body: new Uint8Array([123, 125]),
+        };
+      },
+    },
+    respond: (response) => {
+      seen.response = response;
+    },
+  };
+  const body = new Uint8Array([1, 2, 3]);
+  await new Function("Anywhere", "ctx", `${script}; return process(ctx);`)(Anywhere, {
+    phase: "request",
+    method: "POST",
+    url: "https://api.revenuecat.com/v1/receipts",
+    headers: [
+      ["authorization", "Bearer token"],
+      ["content-length", "3"],
+      ["accept-encoding", "gzip"],
+    ],
+    body,
+  });
+  assert.equal(seen.request.url, "https://mock.example/reven/api.revenuecat.com/v1/receipts");
+  assert.equal(seen.request.method, "POST");
+  assert.equal(seen.request.body, body);
+  assert.deepEqual(seen.request.headers, [
+    ["authorization", "Bearer token"],
+    ["accept-encoding", "identity"],
+  ]);
+  assert.deepEqual(seen.response.headers, [
+    ["content-type", "application/json"],
+    ["x-author", "tester"],
+  ]);
+  assert.deepEqual([...seen.response.body], [123, 125]);
 });
 
 test("converts capture redirect rewrites to request scripts", () => {
