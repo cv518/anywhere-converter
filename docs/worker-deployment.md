@@ -70,6 +70,8 @@ Response includes:
 - `source` when `includeSource=true`
 - `summary.scriptRecoveryUrls` when remote script source could not be fetched and can be supplied through `scriptTextByURL`
 
+The browser UI requests `includeContent=true` and can download the generated files directly from that response. `下载文件` saves the selected `.amrs` / `.arrs`; `下载全部` creates a client-side zip. These downloads do not hit `/sub/*` or `/r/*`, so they are the preferred path when the user wants to reduce Worker subscription traffic.
+
 `GET /sub/deeplink?url=<source-url>`
 
 Builds a dynamic `anywhere://add-rule-set?...` link from the original module or rule-set URL. Use `format=text` to return the raw import URL.

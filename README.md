@@ -112,6 +112,7 @@ Each run writes `.amrs` / `.arrs` files and `conversion-report.json`. The report
 - `GET /sub/reject.arrs?url=<source-url>`, `/sub/direct.arrs?url=<source-url>`, and `/sub/rule.arrs?url=<source-url>` for dynamic routing rule subscriptions
 - `GET /sub/deeplink?url=<source-url>` for a dynamic `anywhere://add-rule-set` import page or redirect
 - `GET /r/:hash/:filename.amrs` and `GET /r/:hash/:filename.arrs` for fallback snapshot files
+- Browser-side file and zip download from the conversion response, which avoids extra Worker hits after conversion
 
 Run locally with Wrangler:
 
@@ -129,6 +130,8 @@ https://<worker-host>/sub/reject.arrs?url=<ruleset-url>&sourceKind=ruleset&ruleS
 ```
 
 Production should bind `CONVERTER_KV` in `wrangler.toml` if snapshot links must stay durable. Dynamic `/sub/*` links do not require KV because they fetch and convert from the original source URL on demand.
+
+For lower Worker load, use the browser UI's download buttons after conversion. Those buttons build `.amrs` / `.arrs` files, or a zip containing all generated files, directly from the current `/api/convert` response in the browser. They do not request `/sub/*` or `/r/*` again.
 
 Deploy to Cloudflare Workers:
 

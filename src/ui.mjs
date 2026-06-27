@@ -560,6 +560,8 @@ export function renderHome() {
               <button class="btn primary" id="submit" type="submit">${icon("wand")}转换</button>
               <a class="btn" id="import" hidden>${icon("phone")}导入 Anywhere</a>
               <button class="btn" id="refresh-cache" type="button" disabled title="重新生成动态订阅链接，绕过 Worker 缓存">${icon("refresh")}刷新缓存</button>
+              <button class="btn" id="download-file" type="button" disabled title="从当前转换响应直接下载预览文件">${icon("download")}下载文件</button>
+              <button class="btn" id="download-all" type="button" disabled title="从当前转换响应直接打包下载全部文件">${icon("download")}下载全部</button>
               <button class="btn" id="copy-file" type="button" disabled>${icon("copy")}复制文件</button>
               <button class="btn" id="copy-json" type="button" disabled>${icon("copy")}复制 JSON</button>
             </div>
@@ -603,6 +605,8 @@ export function renderHome() {
     const statusEl = document.querySelector("#status");
     const importLink = document.querySelector("#import");
     const refreshCache = document.querySelector("#refresh-cache");
+    const downloadFile = document.querySelector("#download-file");
+    const downloadAll = document.querySelector("#download-all");
     const copyFile = document.querySelector("#copy-file");
     const copyJson = document.querySelector("#copy-json");
     const signalsEl = document.querySelector("#signals");
@@ -687,6 +691,8 @@ $done({ body: JSON.stringify(obj) });\`;
       currentFile = null;
       importLink.hidden = true;
       refreshCache.disabled = true;
+      downloadFile.disabled = true;
+      downloadAll.disabled = true;
       cacheBustValue = "";
       copyFile.disabled = true;
       copyJson.disabled = true;
@@ -716,6 +722,21 @@ $done({ body: JSON.stringify(obj) });\`;
       preview.textContent = currentFile.name + " 已复制到剪贴板。\\n\\n" + currentFile.content;
     });
 
+    downloadFile.addEventListener("click", () => {
+      if (!currentFile?.content) return;
+      downloadTextFile(currentFile.name, currentFile.content);
+    });
+
+    downloadAll.addEventListener("click", () => {
+      const files = (lastJson?.files || []).filter((file) => typeof file.content === "string");
+      if (!files.length) return;
+      if (files.length === 1) {
+        downloadTextFile(files[0].name, files[0].content);
+        return;
+      }
+      downloadBlob(downloadBundleName(lastJson), makeZip(files), "application/zip");
+    });
+
     refreshCache.addEventListener("click", () => {
       cacheBustValue = String(Date.now());
       form.requestSubmit();
@@ -726,6 +747,8 @@ $done({ body: JSON.stringify(obj) });\`;
       submit.disabled = true;
       copyFile.disabled = true;
       copyJson.disabled = true;
+      downloadFile.disabled = true;
+      downloadAll.disabled = true;
       importLink.hidden = true;
       refreshCache.disabled = true;
       currentFile = null;
@@ -778,6 +801,8 @@ $done({ body: JSON.stringify(obj) });\`;
         submit.disabled = false;
         copyJson.disabled = !lastJson;
         copyFile.disabled = !currentFile?.content;
+        downloadFile.disabled = !currentFile?.content;
+        downloadAll.disabled = !(lastJson?.files || []).some((file) => typeof file.content === "string");
       }
     });
 
@@ -852,16 +877,133 @@ $done({ body: JSON.stringify(obj) });\`;
       else {
         currentFile = null;
         copyFile.disabled = true;
+        downloadFile.disabled = true;
         preview.textContent = JSON.stringify({ summary: json.summary, files: json.files, diagnostics: json.diagnostics }, null, 2);
       }
+      downloadAll.disabled = !(json.files || []).some((file) => typeof file.content === "string");
     }
 
     function showFile(file) {
       currentFile = file;
       copyFile.disabled = !file?.content;
+      downloadFile.disabled = !file?.content;
       preview.classList.remove("placeholder", "error");
       preview.textContent = file?.content || "";
     }
+
+    function downloadTextFile(name, content) {
+      downloadBlob(name, new Blob([content], { type: "text/plain;charset=utf-8" }));
+    }
+
+    function downloadBlob(name, blob, type) {
+      const fileBlob = blob instanceof Blob ? blob : new Blob([blob], { type: type || "application/octet-stream" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(fileBlob);
+      link.download = safeFileName(name || "anywhere-rules.txt");
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1200);
+    }
+
+    function downloadBundleName(json) {
+      const rawName = json?.metadata?.name || json?.report?.name || "anywhere-converter";
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      return safeFileName(rawName + "-" + stamp + ".zip");
+    }
+
+    function safeFileName(name) {
+      return String(name || "download").replace(/[\\\\/:*?"<>|\\u0000-\\u001f]/g, "_").slice(0, 160) || "download";
+    }
+
+    function makeZip(files) {
+      const encoder = new TextEncoder();
+      const locals = [];
+      const centrals = [];
+      let offset = 0;
+      const stamp = zipDateTime(new Date());
+      for (const file of files) {
+        const nameBytes = encoder.encode(safeFileName(file.name));
+        const data = encoder.encode(file.content || "");
+        const crc = crc32(data);
+        const local = new Uint8Array(30 + nameBytes.length);
+        write32(local, 0, 0x04034b50);
+        write16(local, 4, 20);
+        write16(local, 6, 0x0800);
+        write16(local, 8, 0);
+        write16(local, 10, stamp.time);
+        write16(local, 12, stamp.date);
+        write32(local, 14, crc);
+        write32(local, 18, data.length);
+        write32(local, 22, data.length);
+        write16(local, 26, nameBytes.length);
+        local.set(nameBytes, 30);
+        locals.push(local, data);
+
+        const central = new Uint8Array(46 + nameBytes.length);
+        write32(central, 0, 0x02014b50);
+        write16(central, 4, 20);
+        write16(central, 6, 20);
+        write16(central, 8, 0x0800);
+        write16(central, 10, 0);
+        write16(central, 12, stamp.time);
+        write16(central, 14, stamp.date);
+        write32(central, 16, crc);
+        write32(central, 20, data.length);
+        write32(central, 24, data.length);
+        write16(central, 28, nameBytes.length);
+        write32(central, 42, offset);
+        central.set(nameBytes, 46);
+        centrals.push(central);
+        offset += local.length + data.length;
+      }
+      const centralSize = centrals.reduce((sum, part) => sum + part.length, 0);
+      const end = new Uint8Array(22);
+      write32(end, 0, 0x06054b50);
+      write16(end, 8, files.length);
+      write16(end, 10, files.length);
+      write32(end, 12, centralSize);
+      write32(end, 16, offset);
+      return new Blob([...locals, ...centrals, end], { type: "application/zip" });
+    }
+
+    function zipDateTime(date) {
+      const year = Math.max(1980, date.getFullYear());
+      return {
+        time: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
+        date: ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate(),
+      };
+    }
+
+    function write16(buffer, offset, value) {
+      buffer[offset] = value & 255;
+      buffer[offset + 1] = (value >>> 8) & 255;
+    }
+
+    function write32(buffer, offset, value) {
+      buffer[offset] = value & 255;
+      buffer[offset + 1] = (value >>> 8) & 255;
+      buffer[offset + 2] = (value >>> 16) & 255;
+      buffer[offset + 3] = (value >>> 24) & 255;
+    }
+
+    function crc32(bytes) {
+      let crc = -1;
+      for (let i = 0; i < bytes.length; i++) {
+        crc = (crc >>> 8) ^ crcTable[(crc ^ bytes[i]) & 255];
+      }
+      return (crc ^ -1) >>> 0;
+    }
+
+    const crcTable = (() => {
+      const table = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        let value = i;
+        for (let bit = 0; bit < 8; bit++) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+        table[i] = value >>> 0;
+      }
+      return table;
+    })();
 
     function setStatus(status) {
       statusEl.textContent = status;
@@ -1355,6 +1497,7 @@ $done({ body: JSON.stringify(obj) });\`;
     wand: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 4 5 5M4 20 20 4M12 5l1-3 1 3 3 1-3 1-1 3-1-3-3-1zM5 14l1-2 1 2 2 1-2 1-1 2-1-2-2-1z" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
     phone: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2h8a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zM10 18h4" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
     copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8h11v11H8zM5 16H4a1 1 0 0 1-1-1V4h11a1 1 0 0 1 1 1v1" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
+    download: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
     sliders: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M2 14h4M10 8h4M18 16h4" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
   };
     return icons[name] || "";

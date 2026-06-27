@@ -14,7 +14,7 @@ export default {
     if (request.method === "GET" && url.pathname === "/health") return jsonResponse({
       ok: true,
       version: "0.1.0",
-      capabilities: ["url-input", "text-input", "argument-form", "script-fetch", "script-recovery", "native-js-lift", "aggressive-js-lift", "ruleset-conversion", "dynamic-subscription", "cache-bust-refresh", "fallback-snapshot"],
+      capabilities: ["url-input", "text-input", "argument-form", "script-fetch", "script-recovery", "native-js-lift", "aggressive-js-lift", "ruleset-conversion", "dynamic-subscription", "cache-bust-refresh", "browser-download", "fallback-snapshot"],
     });
     if (request.method === "POST" && url.pathname === "/api/inspect") {
       const limited = await rateLimit(request, env, "inspect");
