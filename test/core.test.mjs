@@ -235,8 +235,11 @@ test("converts trailing header URL rewrite syntax", () => {
 hostname = api.example.com
 `);
   const amrs = result.files.find((file) => file.type === "amrs");
-  const line = amrs.content.split("\n").find((item) => item.startsWith("0, 0,"));
-  assert.deepEqual(internals.parseCsv(line).slice(3), ["0", "https://api.example.com/artist/$1&platform=ipad"]);
+  const line = amrs.content.split("\n").find((item) => item.startsWith("0, 100,"));
+  assert(line);
+  const script = Buffer.from(internals.parseCsv(line)[3], "base64").toString("utf8");
+  assert.match(script, /Anywhere\.http\.request/);
+  assert(script.includes("https://api.example.com/artist/$1&platform=ipad"));
   assert.equal(result.report.skipped, 0);
   assert.deepEqual(validateAnywhereOutput(amrs), []);
 });
@@ -307,8 +310,32 @@ hostname = api.revenuecat.com
   assert.equal(result.argumentDefinitions.Mock.defaultValue, "https://mock.example/reven");
   assert.equal(result.arguments.Mock, "https://mock.example/reven");
   const amrs = result.files.find((file) => file.type === "amrs");
-  assert.match(amrs.content, /https:\/\/mock\.example\/reven\/\$1/);
+  const scriptLine = amrs.content.split("\n").find((line) => line.startsWith("0, 100,"));
+  assert(scriptLine);
+  const script = Buffer.from(internals.parseCsv(scriptLine)[3], "base64").toString("utf8");
+  assert.match(script, /https:\/\/mock\.example\/reven\/\$1/);
+  assert.match(script, /Anywhere\.http\.request/);
+  assert.match(script, /template\.replace/);
   assert.doesNotMatch(amrs.content, /\{\{\{Mock\}\}\}/);
+  assert.deepEqual(validateAnywhereOutput(amrs), []);
+});
+
+test("converts capture redirect rewrites to request scripts", () => {
+  const source = `
+#!name = Capture Redirect Mini
+[URL Rewrite]
+^https:\\/\\/old\\.example\\.com\\/item\\/(\\d+)$ https://new.example.com/view/$1 302
+[MITM]
+hostname = old.example.com
+`;
+  const result = convertModule(source);
+  const amrs = result.files.find((file) => file.type === "amrs");
+  const scriptLine = amrs.content.split("\n").find((line) => line.startsWith("0, 100,"));
+  assert(scriptLine);
+  const script = Buffer.from(internals.parseCsv(scriptLine)[3], "base64").toString("utf8");
+  assert.match(script, /status: 302/);
+  assert.match(script, /location/);
+  assert(script.includes("https://new.example.com/view/$1"));
   assert.deepEqual(validateAnywhereOutput(amrs), []);
 });
 

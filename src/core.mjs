@@ -923,20 +923,32 @@ function convertRewriteLine(item) {
   if (action === "302" || action === "redirect" || action === "redirect-302") {
     const target = rest.join(" ").trim();
     if (!target) return null;
+    if (hasCaptureReference(target)) return requestCaptureRedirectScriptRule(pattern, target);
     return { phase: 0, op: 0, pattern: urlGate(pattern), fields: ["1", target] };
   }
   if (action === "307" || action === "redirect-307") {
     const target = rest.join(" ").trim();
     if (!target) return null;
+    if (hasCaptureReference(target)) return requestCaptureRedirectScriptRule(pattern, target, 307);
     return { phase: 0, op: 0, pattern: urlGate(pattern), fields: ["1", target], degraded: "307 降级为 Anywhere 302 redirect。" };
   }
   if (action === "url" || action === "rewrite" || action === "header") {
     const target = rest.join(" ").trim();
     if (!target) return null;
+    if (hasCaptureReference(target)) return requestCaptureProxyScriptRule(pattern, target);
     return { phase: 0, op: 0, pattern: urlGate(pattern), fields: ["0", target] };
   }
   if (rest.length === 1 && rest[0].toLowerCase() === "header") {
+    if (hasCaptureReference(actionMarker)) return requestCaptureProxyScriptRule(pattern, actionMarker);
     return { phase: 0, op: 0, pattern: urlGate(pattern), fields: ["0", actionMarker] };
+  }
+  if (rest.length === 1 && /^(?:302|redirect|redirect-302)$/i.test(rest[0])) {
+    if (hasCaptureReference(actionMarker)) return requestCaptureRedirectScriptRule(pattern, actionMarker);
+    return { phase: 0, op: 0, pattern: urlGate(pattern), fields: ["1", actionMarker] };
+  }
+  if (rest.length === 1 && /^(?:307|redirect-307)$/i.test(rest[0])) {
+    if (hasCaptureReference(actionMarker)) return requestCaptureRedirectScriptRule(pattern, actionMarker, 307);
+    return { phase: 0, op: 0, pattern: urlGate(pattern), fields: ["1", actionMarker], degraded: "307 降级为 Anywhere 302 redirect。" };
   }
   if (action === "response-body-json-jq") {
     return jqToBodyJson(1, pattern, rest.join(" ")) || jqToScriptRule(1, pattern, rest.join(" "));
@@ -2739,6 +2751,67 @@ function rejectContentForAction(rawAction = "", pattern = "") {
   if (action === "reject-data") return { kind: "data", value: "" };
   if (looksLikeImagePattern(pattern)) return { kind: "gif" };
   return { kind: "text", value: "" };
+}
+
+function hasCaptureReference(value) {
+  return /\$(?:\d|\{\d+\})/.test(String(value || ""));
+}
+
+function requestCaptureProxyScriptRule(pattern, targetTemplate) {
+  const script = captureTemplatePrelude(pattern, targetTemplate) + `
+  if (!/^https?:\\/\\//i.test(target)) return;
+  var headers = [];
+  (ctx.headers || []).forEach(function (header) {
+    var name = String(header[0] || "");
+    var lower = name.toLowerCase();
+    if (!name || lower === "host" || lower === "content-length" || lower === "connection") return;
+    headers.push([name, String(header[1] || "")]);
+  });
+  try {
+    var res = await Anywhere.http.request({
+      url: target,
+      method: ctx.method || "GET",
+      headers: headers,
+      body: ctx.body,
+      timeout: 8000,
+      redirect: "follow"
+    });
+    Anywhere.respond({
+      status: res.status || 200,
+      headers: res.headers || [],
+      body: res.body || new Uint8Array()
+    });
+  } catch (_) {}
+}`;
+  return { phase: 0, op: 100, pattern: urlGate(pattern), fields: [base64(script)], scriptSource: script, noScriptMerge: true };
+}
+
+function requestCaptureRedirectScriptRule(pattern, targetTemplate, status = 302) {
+  const finalStatus = status === 307 ? 307 : 302;
+  const script = captureTemplatePrelude(pattern, targetTemplate) + `
+  if (!/^https?:\\/\\//i.test(target)) return;
+  Anywhere.respond({
+    status: ${finalStatus},
+    headers: [["location", target], ["cache-control", "no-cache"]],
+    body: ""
+  });
+}`;
+  return { phase: 0, op: 100, pattern: urlGate(pattern), fields: [base64(script)], scriptSource: script, noScriptMerge: true };
+}
+
+function captureTemplatePrelude(pattern, targetTemplate) {
+  return `async function process(ctx) {
+  if (ctx.phase !== "request" || !ctx.url) return;
+  var source = String(ctx.url);
+  var pattern = new RegExp(${JSON.stringify(urlGate(pattern))});
+  var match = pattern.exec(source);
+  if (!match) return;
+  var template = ${JSON.stringify(targetTemplate)};
+  var target = template.replace(/\\$\\$|\\$\\{(\\d+)\\}|\\$(\\d)/g, function (token, braced, digit) {
+    if (token === "$$") return "$";
+    var index = Number(braced || digit);
+    return match[index] || "";
+  });`;
 }
 
 function normalizeMitmRulePattern(rule) {
