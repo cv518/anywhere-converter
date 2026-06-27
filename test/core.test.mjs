@@ -615,9 +615,41 @@ hostname = api.example.com
   assert.match(wrapped, /function __URLShim/);
   assert.match(wrapped, /function __TextDecoderShim/);
   assert.match(wrapped, /function __atobShim/);
+  assert.match(wrapped, /function __fetch/);
+  assert.match(wrapped, /var __cryptoShim/);
   assert.match(wrapped, /"setTimeout", "clearTimeout", "setInterval", "clearInterval"/);
   assert.match(wrapped, /"URL", "URLSearchParams"/);
   assert.match(wrapped, /"TextEncoder", "TextDecoder", "atob", "btoa"/);
+  assert.match(wrapped, /"fetch", "crypto"/);
+  assert.deepEqual(validateAnywhereOutput(amrs), []);
+});
+
+test("compat wrapper exposes global fetch and WebCrypto random shim", async () => {
+  const source = `
+#!name = JS Compat Native Globals Mini
+[Script]
+http-response ^https:\\/\\/api\\.example\\.com\\/config script-path=https://example.com/native-globals.js, requires-body=true
+[MITM]
+hostname = api.example.com
+`;
+  const result = await convertModuleAsync(source, {
+    fetchScripts: true,
+    fetchText: async () => `
+const bytes = new Uint8Array(4);
+crypto.getRandomValues(bytes);
+void crypto.subtle;
+fetch("https://config.example.com/profile").then(resp => resp.json()).then(obj => $done({ body: JSON.stringify(obj) }));
+`,
+  });
+  const amrs = result.files.find((file) => file.type === "amrs");
+  const line = amrs.content.split("\n").find((item) => item.startsWith("1, 100,"));
+  const wrapped = Buffer.from(internals.parseCsv(line)[3], "base64").toString("utf8");
+  assert.match(wrapped, /function __fetch/);
+  assert.match(wrapped, /getRandomValues/);
+  assert.match(wrapped, /Anywhere\.crypto\.randomBytes/);
+  assert(result.diagnostics.some((item) => item.code === "script-http-client"));
+  assert(result.diagnostics.some((item) => item.code === "script-webcrypto-lite"));
+  assert(result.diagnostics.some((item) => item.code === "script-webcrypto-subtle"));
   assert.deepEqual(validateAnywhereOutput(amrs), []);
 });
 

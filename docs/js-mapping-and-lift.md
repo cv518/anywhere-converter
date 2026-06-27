@@ -29,10 +29,14 @@ This document defines how the generic converter handles Loon/Surge JavaScript. H
 | `$argument` | parsed `argument=` string | Supported in compat wrapper for script-level arguments. |
 | `$httpClient.get/post/put/delete` | `Anywhere.http.request()` | Preserved with async lifecycle waiting and warning because it parks the current connection and needs timeout/budget validation. |
 | `$task.fetch` | `Anywhere.http.request()` Promise wrapper | Preserved for common Quantumult X / mixed Env scripts, with the same external HTTP warning and budget caveats. |
+| global `fetch()` | `Anywhere.http.request()` response-like Promise | Preserved in compat wrapper for common `text()`, `json()`, `arrayBuffer()`, `status`, `ok`, `headers`, and `url` usage. |
 | `timeout=` script option | bounded compat wait timeout | Parsed for wrapped scripts and clamped to 1-10 seconds so upstream `timeout=60` does not stall Anywhere indefinitely. |
 | Remote script download budget | diagnostics before wrapping | Enforced by `maxScriptBytes` and `maxTotalScriptBytes`; oversized scripts are skipped with explicit warnings. |
 | `$notification` / `$notify` | no-op | Preserved as no-op. |
 | `$utils.gzip/ungzip` | `Anywhere.codec.gzip` | Preserved. |
+| `TextEncoder` / `TextDecoder` | Anywhere text codec globals, fallback to `Anywhere.codec.utf8` | Preserved in compat wrapper. |
+| `atob` / `btoa` | `Anywhere.codec.base64` fallback | Preserved in compat wrapper for common base64 helpers. |
+| `crypto.getRandomValues` / `crypto.randomUUID` | `Anywhere.crypto.randomBytes` / `Anywhere.crypto.uuid` fallback | Preserved in compat wrapper. Full `crypto.subtle` is not emulated. |
 | `bodyBytes` / protobuf buffers | `Anywhere.codec.protobuf` only when hand-written | Generic converter does not infer field-level protobuf edits; mark `sample-required`. |
 | `import` / `importScripts` | none | Hard blocker. |
 | `eval()` / `new Function()` in source scripts | compat wrapper only | Preserved as `sample-required`; dynamic runtime code cannot be considered stable without samples. |
@@ -95,6 +99,7 @@ The converter must not lift these into native rules automatically:
 - Cross-request storage logic.
 - External HTTP enrichment as native `body-json` or header rules. `$httpClient` and `$task.fetch` are preserved in compat scripts through `Anywhere.http.request()`.
 - Crypto, protobuf, flatbuffer, or arbitrary binary parsing.
+- Full WebCrypto `crypto.subtle` workflows. The compat wrapper only provides random helpers because those map cleanly to `Anywhere.crypto`.
 - Runtime dynamic code execution through `eval()` or `new Function()`.
 - Large bundles or minified app-specific frameworks.
 - Feed cleanup requiring real response samples to identify item schema.

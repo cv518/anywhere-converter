@@ -17,6 +17,7 @@ The converter is intentionally conservative. It maps stable Loon/Surge features 
 | `docs/conversion-modes.md` | Detailed `compat` / `aggressive` mode behavior. |
 | `docs/mapping-quick-reference.md` | Loon/Surge to Anywhere mapping table. |
 | `docs/js-mapping-and-lift.md` | JavaScript compatibility and native-lift table. |
+| `docs/anywhere-native-capability-audit.md` | Anywhere native JS capability audit and converter coverage table. |
 | `docs/protobuf-strategy.md` | Binary/protobuf handling strategy and limits. |
 | `docs/worker-deployment.md` | Local Worker preview and Cloudflare deployment notes. |
 | `docs/release-checklist.md` | Public release and deployment checklist. |
@@ -40,7 +41,7 @@ The stable native slice currently covers:
 - `[Argument]` defaults and `enable={argument_name}` gates
 - supported complex jq array filters to generated JSON scripts when native `body-json` cannot express them
 
-Remote scripts are recognized in all modes and fetched by default in CLI and Worker conversions. The converter downloads them within per-file and total byte budgets, wraps common Loon/Surge APIs including `$argument`, `$httpClient`, `$task.fetch`, `fetch`, script-level `timeout=`, and common Env/BoxJS helpers, emits Anywhere script op `100`, merges same-gate scripts, merges repeated identical script sources, builds same-phase gated dispatchers for different URL patterns, compacts simple URL regex unions, and reports compatibility risks.
+Remote scripts are recognized in all modes and fetched by default in CLI and Worker conversions. The converter downloads them within per-file and total byte budgets, wraps common Loon/Surge APIs including `$argument`, `$httpClient`, `$task.fetch`, global `fetch`, Web text/base64 helpers, lightweight `crypto.getRandomValues/randomUUID`, script-level `timeout=`, and common Env/BoxJS helpers, emits Anywhere script op `100`, merges same-gate scripts, merges repeated identical script sources, builds same-phase gated dispatchers for different URL patterns, compacts simple URL regex unions, and reports compatibility risks.
 
 The public conversion path is `compat`: fetch remote scripts, lift high-confidence native patterns, and preserve the rest through the compatibility wrapper. `aggressive` is optional and additionally lifts common but slightly more assumption-heavy JSON cleanup idioms. See [Conversion Modes](docs/conversion-modes.md) and [JavaScript Mapping And Lift](docs/js-mapping-and-lift.md) before widening conversion rules.
 

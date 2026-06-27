@@ -1166,8 +1166,14 @@ function scanScriptRisk(source, parsed, rawLine) {
   if (parsed.phase === 0 && /\$done\s*\(\s*\{(?!\s*response\s*:)[\s\S]{0,300}?(?:\burl\b\s*(?=[,}])|(?:url|headers|method)\s*:)/.test(source)) {
     diagnostics.push({ level: "error", code: "request-mutation-script", message: "request 脚本尝试修改 url/headers/method，Anywhere 脚本语义不能直接表达。" });
   }
-  if (/\$httpClient\b|\$task\s*\.\s*fetch\b|\.request\s*\(/.test(source)) {
+  if (/\$httpClient\b|\$task\s*\.\s*fetch\b|\bfetch\s*\(|\bXMLHttpRequest\b|\.request\s*\(/.test(source)) {
     diagnostics.push({ level: "warning", code: "script-http-client", message: "脚本使用外部 HTTP 请求，会 park 当前连接并受 Anywhere.http 预算/超时限制。" });
+  }
+  if (/\bcrypto\s*\.\s*(?:getRandomValues|randomUUID)\b/.test(source)) {
+    diagnostics.push({ level: "info", code: "script-webcrypto-lite", message: "脚本使用 WebCrypto 随机数接口，已映射到 Anywhere.crypto 的轻量兼容实现。" });
+  }
+  if (/\bcrypto\s*\.\s*subtle\b/.test(source)) {
+    diagnostics.push({ level: "warning", code: "script-webcrypto-subtle", message: "脚本使用 crypto.subtle；Anywhere 提供 Anywhere.crypto，但不提供完整 WebCrypto subtle 兼容层，需实机验证。" });
   }
   if (parsed.argument && !/\$argument\b/.test(codeWithoutStrings)) {
     diagnostics.push({ level: "warning", code: "script-argument-unused", message: "规则声明了脚本参数，但源码没有读取 $argument；对应参数开关可能不会影响脚本行为。" });
@@ -2064,6 +2070,8 @@ function wrapLoonSurgeScript(source, parsed) {
   var __NativeTextDecoder = typeof globalThis !== "undefined" && typeof globalThis.TextDecoder === "function" ? globalThis.TextDecoder : null;
   var __nativeAtob = typeof globalThis !== "undefined" && typeof globalThis.atob === "function" ? globalThis.atob.bind(globalThis) : null;
   var __nativeBtoa = typeof globalThis !== "undefined" && typeof globalThis.btoa === "function" ? globalThis.btoa.bind(globalThis) : null;
+  var __nativeFetch = typeof globalThis !== "undefined" && typeof globalThis.fetch === "function" ? globalThis.fetch.bind(globalThis) : null;
+  var __nativeCrypto = typeof globalThis !== "undefined" && globalThis.crypto ? globalThis.crypto : null;
   function __setTimeout(callback, ms) {
     if (__nativeSetTimeout) return __nativeSetTimeout(callback, ms);
     var id = __timerSeed++;
@@ -2109,6 +2117,17 @@ function wrapLoonSurgeScript(source, parsed) {
     for (var i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i) & 255;
     return Anywhere.codec.base64.encode(bytes);
   }
+  var __cryptoShim = {
+    getRandomValues: function (typedArray) {
+      if (!typedArray || !ArrayBuffer.isView(typedArray)) throw new TypeError("crypto.getRandomValues expects a typed array");
+      var bytes = __bodyIn(Anywhere.crypto.randomBytes(typedArray.byteLength));
+      new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength).set(bytes);
+      return typedArray;
+    },
+    randomUUID: function () {
+      return Anywhere.crypto.uuid();
+    }
+  };
   function __URLSearchParamsShim(search) {
     this.__pairs = [];
     var text = String(search || "");
@@ -2181,6 +2200,8 @@ function wrapLoonSurgeScript(source, parsed) {
       if (typeof globalThis.TextDecoder !== "function") globalThis.TextDecoder = __TextDecoderShim;
       if (typeof globalThis.atob !== "function") globalThis.atob = __atobShim;
       if (typeof globalThis.btoa !== "function") globalThis.btoa = __btoaShim;
+      if (typeof globalThis.fetch !== "function") globalThis.fetch = __fetch;
+      if (!globalThis.crypto) globalThis.crypto = __cryptoShim;
     }
   } catch (_) {}
   function __headersObject(headers) {
@@ -2249,6 +2270,38 @@ function wrapLoonSurgeScript(source, parsed) {
       };
     }).finally(function () { __pendingHttp -= 1; });
   }
+  function __arrayBufferFromBytes(value) {
+    var bytes = __bodyIn(value);
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  }
+  function __fetch(input, init) {
+    if (__nativeFetch) return __nativeFetch(input, init);
+    var request = typeof input === "string" ? { url: input } : (input || {});
+    init = init || {};
+    var url = init.url || request.url || String(input || "");
+    var method = init.method || request.method || "GET";
+    var headers = init.headers || request.headers || {};
+    var body = Object.prototype.hasOwnProperty.call(init, "body") ? init.body : request.body;
+    __pendingHttp += 1;
+    return Promise.resolve(Anywhere.http.request({ method: method, url: url, headers: headers, body: body })).then(function (res) {
+      var bytes = res.body || new Uint8Array();
+      var status = res.status || 200;
+      var response = {
+        ok: status >= 200 && status < 300,
+        status: status,
+        statusText: "",
+        url: res.url || url,
+        headers: __headersObject(res.headers),
+        body: bytes,
+        bodyBytes: bytes,
+        text: function () { return Promise.resolve(Anywhere.codec.utf8.decode(bytes)); },
+        json: function () { return Promise.resolve(JSON.parse(Anywhere.codec.utf8.decode(bytes))); },
+        arrayBuffer: function () { return Promise.resolve(__arrayBufferFromBytes(bytes)); },
+        clone: function () { return response; }
+      };
+      return response;
+    }).finally(function () { __pendingHttp -= 1; });
+  }
   function __finish() {
     if (__finished) return;
     __finished = true;
@@ -2300,7 +2353,7 @@ function wrapLoonSurgeScript(source, parsed) {
     };
   }
   try {
-    var __returnValue = (new Function("$request", "$response", "$done", "$persistentStore", "$prefs", "$httpClient", "$task", "$argument", "$notification", "$notify", "$environment", "$loon", "$utils", "Env", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "URL", "URLSearchParams", "TextEncoder", "TextDecoder", "atob", "btoa", __source))($request, $response, $done, $persistentStore, $prefs, $httpClient, $task, $argument, $notification, $notify, $environment, $loon, $utils, Env, __setTimeout, __clearTimeout, __setInterval, __clearInterval, __NativeURL || __URLShim, __NativeURLSearchParams || __URLSearchParamsShim, __NativeTextEncoder || __TextEncoderShim, __NativeTextDecoder || __TextDecoderShim, __nativeAtob || __atobShim, __nativeBtoa || __btoaShim);
+    var __returnValue = (new Function("$request", "$response", "$done", "$persistentStore", "$prefs", "$httpClient", "$task", "$argument", "$notification", "$notify", "$environment", "$loon", "$utils", "Env", "setTimeout", "clearTimeout", "setInterval", "clearInterval", "URL", "URLSearchParams", "TextEncoder", "TextDecoder", "atob", "btoa", "fetch", "crypto", __source))($request, $response, $done, $persistentStore, $prefs, $httpClient, $task, $argument, $notification, $notify, $environment, $loon, $utils, Env, __setTimeout, __clearTimeout, __setInterval, __clearInterval, __NativeURL || __URLShim, __NativeURLSearchParams || __URLSearchParamsShim, __NativeTextEncoder || __TextEncoderShim, __NativeTextDecoder || __TextDecoderShim, __nativeAtob || __atobShim, __nativeBtoa || __btoaShim, __nativeFetch || __fetch, __nativeCrypto || __cryptoShim);
     if (__returnValue && typeof __returnValue.then === "function") {
       Promise.resolve(__returnValue).catch(function (error) { Anywhere.log.error(String(error && error.stack || error)); });
     }
