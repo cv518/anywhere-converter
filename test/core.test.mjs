@@ -1270,6 +1270,34 @@ hostname = api.example.com
   assert.deepEqual(validateAnywhereOutput(amrs), []);
 });
 
+test("fetches legacy script-response-header and script-response-body URLs", async () => {
+  const source = `
+#!name = Legacy Script Syntax Mini
+[Script]
+http-response ^https:\\/\\/api\\.example\\.com\\/header url script-response-header https://example.com/header.js
+http-response ^https:\\/\\/api\\.example\\.com\\/body script-response-body https://example.com/body.js
+[MITM]
+hostname = api.example.com
+`;
+  const fetched = [];
+  const result = await convertModuleAsync(source, {
+    fetchScripts: true,
+    fetchText: async (url) => {
+      fetched.push(url);
+      return url.endsWith("header.js")
+        ? "$done({ headers: $response.headers })"
+        : "$done({ body: $response.body })";
+    },
+  });
+  assert.deepEqual(fetched, ["https://example.com/header.js", "https://example.com/body.js"]);
+  assert(!result.diagnostics.some((item) => item.code === "script-source-missing"));
+  const amrs = result.files.find((file) => file.type === "amrs");
+  const scriptLines = amrs.content.split("\n").filter((line) => line.startsWith("1, 100,"));
+  assert.equal(scriptLines.length, 1);
+  assert(result.diagnostics.some((item) => item.code === "script-dispatcher-merged"));
+  assert.deepEqual(validateAnywhereOutput(amrs), []);
+});
+
 test("merges identical script sources before gated dispatcher", async () => {
   const source = `
 #!name = Reused Script Mini

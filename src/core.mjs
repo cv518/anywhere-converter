@@ -1133,16 +1133,30 @@ function parseScriptLine(line) {
   const phase = type === "http-request" ? 0 : type === "http-response" ? 1 : null;
   if (phase == null || !parts[1]) return null;
   const options = parseKeyValueTokens(parts.slice(2).join(" "));
+  const legacy = parseLegacyScriptTokens(parts.slice(2));
   return {
     phase,
     pattern: parts[1],
-    path: options["script-path"],
+    path: options["script-path"] || legacy.path,
     inlineScript: options.script || "",
     argument: options.argument || "",
     binaryBodyMode: isTruthy(options["binary-body-mode"]),
-    requiresBody: isTruthy(options["requires-body"]),
+    requiresBody: isTruthy(options["requires-body"]) || legacy.requiresBody,
     timeoutMs: normalizeScriptTimeout(options.timeout),
   };
+}
+
+function parseLegacyScriptTokens(tokens) {
+  for (let index = 0; index < tokens.length; index += 1) {
+    const action = String(tokens[index] || "").toLowerCase();
+    if (!/^script-(request|response)-(header|body)$/.test(action)) continue;
+    const path = tokens[index + 1] || "";
+    return {
+      path: /^https?:\/\//i.test(path) ? path : "",
+      requiresBody: /-body$/.test(action),
+    };
+  }
+  return { path: "", requiresBody: false };
 }
 
 function normalizeScriptTimeout(raw) {

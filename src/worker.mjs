@@ -93,7 +93,7 @@ async function handleConvert(request, env) {
     maxScriptBytes: maxScriptBytes(env),
     maxTotalScriptBytes: maxTotalScriptBytes(env),
     fetchText: async (url, options = {}) => {
-      const fetched = await fetchSourceURL(url, env, options.maxBytes || maxScriptBytes(env));
+      const fetched = await fetchSourceURL(url, env, options.maxBytes || maxScriptBytes(env), { cache: "memory" });
       if (fetched.error) throw new Error(fetched.detail || fetched.error);
       return fetched.source;
     },
@@ -259,7 +259,7 @@ async function convertFromDynamicQuery(request, env) {
     maxScriptBytes: maxScriptBytes(env),
     maxTotalScriptBytes: maxTotalScriptBytes(env),
     fetchText: async (scriptUrl, options = {}) => {
-      const script = await fetchSourceURL(scriptUrl, env, options.maxBytes || maxScriptBytes(env));
+      const script = await fetchSourceURL(scriptUrl, env, options.maxBytes || maxScriptBytes(env), { cache: "memory" });
       if (script.error) throw new Error(script.detail || script.error);
       return script.source;
     },
@@ -568,7 +568,7 @@ async function readInput(request) {
   return { source: await request.text() };
 }
 
-async function fetchSourceURL(rawUrl, env, byteLimit) {
+async function fetchSourceURL(rawUrl, env, byteLimit, options = {}) {
   let url;
   try {
     url = new URL(rawUrl);
@@ -581,7 +581,8 @@ async function fetchSourceURL(rawUrl, env, byteLimit) {
   if (isBlockedFetchHost(url.hostname)) {
     return { error: "blocked_source_url", detail: "不允许拉取 localhost、内网或链路本地地址。" };
   }
-  const cached = await getCachedFetchSource(url.toString(), env);
+  const platformCache = options.cache !== "memory";
+  const cached = await getCachedFetchSource(url.toString(), env, { platformCache });
   if (cached != null) {
     const limit = byteLimit || maxInputBytes(env);
     if (new TextEncoder().encode(cached).length > limit) return { error: "input_too_large", detail: "远程内容超过大小限制。", status: 413 };
@@ -604,7 +605,7 @@ async function fetchSourceURL(rawUrl, env, byteLimit) {
   if (contentLength > limit) return { error: "input_too_large", detail: "远程模块超过大小限制。", status: 413 };
   const source = await response.text();
   if (new TextEncoder().encode(source).length > limit) return { error: "input_too_large", detail: "远程模块超过大小限制。", status: 413 };
-  await putCachedFetchSource(url.toString(), source, env);
+  await putCachedFetchSource(url.toString(), source, env, { platformCache });
   return { source, url: url.toString() };
 }
 
@@ -644,21 +645,23 @@ async function putRateCount(env, key, count) {
   memoryRateStore.set(key, { count, expiresAt: Date.now() + 90 * 1000 });
 }
 
-async function getCachedFetchSource(url, env) {
+async function getCachedFetchSource(url, env, options = {}) {
   const ttl = fetchCacheTtl(env);
   if (ttl <= 0) return null;
   const memory = memoryFetchCache.get(url);
   if (memory && memory.expiresAt > Date.now()) return memory.source;
+  if (options.platformCache === false) return null;
   if (typeof caches === "undefined" || !caches.default) return null;
   const response = await caches.default.match(new Request(url, { method: "GET" }));
   if (!response) return null;
   return response.text();
 }
 
-async function putCachedFetchSource(url, source, env) {
+async function putCachedFetchSource(url, source, env, options = {}) {
   const ttl = fetchCacheTtl(env);
   if (ttl <= 0) return;
   memoryFetchCache.set(url, { source, expiresAt: Date.now() + ttl * 1000 });
+  if (options.platformCache === false) return;
   if (typeof caches === "undefined" || !caches.default) return;
   const response = new Response(source, {
     headers: {
