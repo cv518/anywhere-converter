@@ -1165,7 +1165,7 @@ $done({ body: JSON.stringify(obj) });\`;
           stats.compat += 1;
         } else if (/sample-required/.test(code) || code === "sample-required-pattern" || code === "script-node-require-branch" || code === "script-http-client" || code === "script-large") {
           stats.review += 1;
-        } else if (code === "script-fetch-failed" || code === "script-source-missing" || code === "script-fetch-file-too-large" || code === "script-fetch-budget-exceeded" || code === "script-import" || code === "request-mutation-script") {
+        } else if (code === "script-fetch-failed" || code === "script-source-missing" || code === "script-fetch-file-too-large" || code === "script-fetch-budget-exceeded" || code === "script-fetch-count-exceeded" || code === "script-import" || code === "request-mutation-script") {
           stats.blocked += 1;
         }
       }
@@ -1259,7 +1259,7 @@ $done({ body: JSON.stringify(obj) });\`;
       if (code === "domain-exact-degraded" || code === "logical-and-degraded" || /degraded$/.test(code)) return "degraded";
       if (/sample-required/.test(code) || code === "sample-required-pattern") return "review";
       if (code.startsWith("script-")) {
-        if (code === "script-fetch-failed" || code === "script-source-missing" || code === "script-fetch-file-too-large" || code === "script-fetch-budget-exceeded" || code === "script-import") return "action";
+        if (code === "script-fetch-failed" || code === "script-source-missing" || code === "script-fetch-file-too-large" || code === "script-fetch-budget-exceeded" || code === "script-fetch-count-exceeded" || code === "script-import") return "action";
         return "script";
       }
       if (level === "error" || /^unsupported-|blocked|invalid|unknown-header|request-mutation-script/.test(code)) return "action";
@@ -1317,6 +1317,7 @@ $done({ body: JSON.stringify(obj) });\`;
         "script-source-missing": "缺少脚本源码",
         "script-fetch-file-too-large": "脚本超过单文件限制",
         "script-fetch-budget-exceeded": "脚本超过总下载预算",
+        "script-fetch-count-exceeded": "脚本超过下载数量上限",
         "script-import": "脚本 import 阻断",
         "request-mutation-script": "请求脚本需人工处理",
         "script-source-merged": "相同脚本已合并",

@@ -245,65 +245,92 @@ export async function convertModuleAsync(source, options = {}) {
   const parsed = parseModule(source, options);
   const argumentValues = resolveArgumentValues(parsed.arguments, options.arguments);
   const scriptTextByURL = { ...(options.scriptTextByURL || {}) };
+  const scriptSourceStatusByURL = {};
   const diagnostics = [];
   const fetchText = options.fetchText;
   const maxScriptBytes = Number(options.maxScriptBytes || 1024 * 1024);
   const maxTotalScriptBytes = Number(options.maxTotalScriptBytes || 5 * 1024 * 1024);
+  const maxScriptFetches = Number(options.maxScriptFetches);
+  const scriptFetchLimit = Number.isFinite(maxScriptFetches) && maxScriptFetches > 0 ? maxScriptFetches : Infinity;
   let fetchedScriptBytes = Object.values(scriptTextByURL).reduce((sum, text) => sum + byteLength(text), 0);
+  let scriptFetchAttempts = 0;
+  const attemptedScriptURLs = new Set(Object.keys(scriptTextByURL));
   if (typeof fetchText === "function") {
     for (const originalItem of parsed.items.filter((entry) => entry.section === "Script")) {
       const resolvedItem = resolveItemArguments(originalItem, argumentValues);
       if (!resolvedItem.enabled) continue;
       const item = resolvedItem.item;
       const script = parseScriptLine(item.text);
-      if (!script?.path || script.inlineScript || scriptTextByURL[script.path]) continue;
+      if (!script?.path || script.inlineScript || attemptedScriptURLs.has(script.path)) continue;
+      attemptedScriptURLs.add(script.path);
+      if (scriptFetchAttempts >= scriptFetchLimit) {
+        const diagnostic = {
+          level: "warning",
+          code: "script-fetch-count-exceeded",
+          message: `脚本下载数量超过本次转换上限 ${scriptFetchLimit}，跳过：${script.path}`,
+          line: item.line,
+          source: item.raw,
+        };
+        scriptSourceStatusByURL[script.path] = diagnostic;
+        diagnostics.push(diagnostic);
+        continue;
+      }
       if (fetchedScriptBytes >= maxTotalScriptBytes) {
-        diagnostics.push({
+        const diagnostic = {
           level: "warning",
           code: "script-fetch-budget-exceeded",
           message: `脚本总下载预算已用尽，跳过：${script.path}`,
           line: item.line,
           source: item.raw,
-        });
+        };
+        scriptSourceStatusByURL[script.path] = diagnostic;
+        diagnostics.push(diagnostic);
         continue;
       }
       try {
+        scriptFetchAttempts += 1;
         const text = await fetchText(script.path, { maxBytes: maxScriptBytes, kind: "script" });
         const size = byteLength(text);
         if (size > maxScriptBytes) {
-          diagnostics.push({
+          const diagnostic = {
             level: "warning",
             code: "script-fetch-file-too-large",
             message: `脚本超过单文件预算 ${maxScriptBytes} bytes，跳过：${script.path}`,
             line: item.line,
             source: item.raw,
-          });
+          };
+          scriptSourceStatusByURL[script.path] = diagnostic;
+          diagnostics.push(diagnostic);
           continue;
         }
         if (fetchedScriptBytes + size > maxTotalScriptBytes) {
-          diagnostics.push({
+          const diagnostic = {
             level: "warning",
             code: "script-fetch-budget-exceeded",
             message: `脚本超过总下载预算 ${maxTotalScriptBytes} bytes，跳过：${script.path}`,
             line: item.line,
             source: item.raw,
-          });
+          };
+          scriptSourceStatusByURL[script.path] = diagnostic;
+          diagnostics.push(diagnostic);
           continue;
         }
         scriptTextByURL[script.path] = text;
         fetchedScriptBytes += size;
       } catch (error) {
-        diagnostics.push({
+        const diagnostic = {
           level: "warning",
           code: "script-fetch-failed",
           message: `脚本下载失败：${script.path} (${error?.message || error})`,
           line: item.line,
           source: item.raw,
-        });
+        };
+        scriptSourceStatusByURL[script.path] = diagnostic;
+        diagnostics.push(diagnostic);
       }
     }
   }
-  const result = convertModule(source, { ...options, scriptTextByURL });
+  const result = convertModule(source, { ...options, scriptTextByURL, scriptSourceStatusByURL });
   result.diagnostics.unshift(...diagnostics);
   result.report = buildReport({
     converted: result.report.converted,
@@ -1135,7 +1162,11 @@ function convertScriptLine(item, options) {
   if (!options.fetchScripts && !source) {
     return { code: "script-fetch-disabled", message: "脚本规则已识别；当前未下载远程脚本，启用 fetchScripts 后可用兼容层保留。" };
   }
-  if (!source) return { code: "script-source-missing", message: "脚本没有可用 source；请开启脚本下载或提供 scriptTextByURL。" };
+  if (!source) {
+    const status = parsed.path ? options.scriptSourceStatusByURL?.[parsed.path] : null;
+    if (status) return { code: status.code, message: status.message || "脚本没有可用 source；请补全脚本文本。" };
+    return { code: "script-source-missing", message: "脚本没有可用 source；请开启脚本下载或提供 scriptTextByURL。" };
+  }
   if (options.jsLift !== false) {
     const requestLift = liftRequestMutationScript(source, parsed);
     if (requestLift.length) {

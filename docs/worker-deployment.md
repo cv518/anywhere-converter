@@ -108,8 +108,9 @@ Returns generated `.amrs` or `.arrs` content from a fallback conversion snapshot
 - `FETCH_CACHE_TTL_SECONDS` controls public remote URL fetch caching. User-pasted module text is not cached by this path.
 - `DYNAMIC_CACHE_TTL_SECONDS` controls the converted `/sub/*` response cache. Keep it non-zero for public deployments to reduce repeated conversion CPU and upstream fetch pressure.
 - Remote script fetching is on by default. Set `fetchScripts=false` only for offline/native diagnostics.
+- `MAX_SCRIPT_FETCHES` caps how many unique remote scripts one conversion fetches before emitting `script-fetch-count-exceeded`; keep it below your Worker subrequest limit for public deployments. Set it to `0` only for trusted private Workers where the platform limit is known.
 - `scriptTextByURL` can provide trusted script text for remote script URLs that are blocked, deleted, or protected by anti-bot rules. Values are bounded by `MAX_SCRIPT_BYTES` and `MAX_TOTAL_SCRIPT_BYTES`.
 - Dynamic links cannot carry `scriptTextByURL`; conversions with manual script bodies use `snapshotImportUrl` as the import target.
 - The browser UI exposes the same source recovery path: failed script URLs are shown as "补脚本" chips and can be filled in without editing JSON.
 - Tune `RATE_LIMIT_PER_MINUTE` for expected public traffic.
-- Increase `MAX_INPUT_BYTES`, `MAX_SCRIPT_BYTES`, and `MAX_TOTAL_SCRIPT_BYTES` only after measuring Worker CPU and memory.
+- Increase `MAX_INPUT_BYTES`, `MAX_SCRIPT_BYTES`, `MAX_TOTAL_SCRIPT_BYTES`, and `MAX_SCRIPT_FETCHES` only after measuring Worker CPU, memory, and subrequest usage.

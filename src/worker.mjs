@@ -92,6 +92,7 @@ async function handleConvert(request, env) {
     fetchScripts: input.fetchScripts == null ? true : input.fetchScripts === true || input.fetchScripts === "true" || input.fetchScripts === "1",
     maxScriptBytes: maxScriptBytes(env),
     maxTotalScriptBytes: maxTotalScriptBytes(env),
+    maxScriptFetches: maxScriptFetches(env),
     fetchText: async (url, options = {}) => {
       const fetched = await fetchSourceURL(url, env, options.maxBytes || maxScriptBytes(env), { cache: "memory" });
       if (fetched.error) throw new Error(fetched.detail || fetched.error);
@@ -258,6 +259,7 @@ async function convertFromDynamicQuery(request, env) {
     fetchScripts,
     maxScriptBytes: maxScriptBytes(env),
     maxTotalScriptBytes: maxTotalScriptBytes(env),
+    maxScriptFetches: maxScriptFetches(env),
     fetchText: async (scriptUrl, options = {}) => {
       const script = await fetchSourceURL(scriptUrl, env, options.maxBytes || maxScriptBytes(env), { cache: "memory" });
       if (script.error) throw new Error(script.detail || script.error);
@@ -472,7 +474,7 @@ function isBenignSummaryDiagnostic(diagnostic) {
 }
 
 function scriptRecoveryUrls(diagnostics) {
-  const codes = new Set(["script-fetch-failed", "script-fetch-file-too-large", "script-fetch-budget-exceeded", "script-source-missing"]);
+  const codes = new Set(["script-fetch-failed", "script-fetch-file-too-large", "script-fetch-budget-exceeded", "script-fetch-count-exceeded", "script-source-missing"]);
   const urls = [];
   const seen = new Set();
   for (const diagnostic of diagnostics) {
@@ -589,16 +591,23 @@ async function fetchSourceURL(rawUrl, env, byteLimit, options = {}) {
     return { source: cached, url: url.toString(), cached: true };
   }
   let response;
-  try {
-    response = await fetch(url.toString(), {
-      headers: { "user-agent": "AnywhereModuleConverter/0.1" },
-      redirect: "follow",
-    });
-  } catch (error) {
-    return { error: "source_fetch_failed", detail: error?.message || "fetch failed", status: 502 };
+  let lastFailure = "";
+  for (const candidate of fetchURLCandidates(url)) {
+    try {
+      response = await fetch(candidate.toString(), {
+        headers: { "user-agent": "AnywhereModuleConverter/0.1" },
+        redirect: "follow",
+      });
+    } catch (error) {
+      lastFailure = error?.message || "fetch failed";
+      continue;
+    }
+    if (response.ok) break;
+    lastFailure = `HTTP ${response.status}`;
+    response = null;
   }
-  if (!response.ok) {
-    return { error: "source_fetch_failed", detail: `HTTP ${response.status}`, status: 502 };
+  if (!response) {
+    return { error: "source_fetch_failed", detail: lastFailure || "fetch failed", status: 502 };
   }
   const limit = byteLimit || maxInputBytes(env);
   const contentLength = Number(response.headers.get("content-length") || "0");
@@ -607,6 +616,29 @@ async function fetchSourceURL(rawUrl, env, byteLimit, options = {}) {
   if (new TextEncoder().encode(source).length > limit) return { error: "input_too_large", detail: "远程模块超过大小限制。", status: 413 };
   await putCachedFetchSource(url.toString(), source, env, { platformCache });
   return { source, url: url.toString() };
+}
+
+function fetchURLCandidates(url) {
+  const out = [url];
+  const jsdelivr = githubRawToJsDelivr(url);
+  if (jsdelivr) out.push(jsdelivr);
+  return out;
+}
+
+function githubRawToJsDelivr(url) {
+  if (url.protocol !== "https:" || url.hostname !== "raw.githubusercontent.com") return null;
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length < 4) return null;
+  const [owner, repo] = parts;
+  let ref = parts[2];
+  let pathStart = 3;
+  if (parts[2] === "refs" && (parts[3] === "heads" || parts[3] === "tags") && parts[4]) {
+    ref = parts[4];
+    pathStart = 5;
+  }
+  const filePath = parts.slice(pathStart).join("/");
+  if (!owner || !repo || !ref || !filePath) return null;
+  return new URL(`https://cdn.jsdelivr.net/gh/${owner}/${repo}@${ref}/${filePath}${url.search}`);
 }
 
 async function rateLimit(request, env, scope) {
@@ -720,6 +752,12 @@ function maxScriptBytes(env) {
 function maxTotalScriptBytes(env) {
   const configured = Number(env.MAX_TOTAL_SCRIPT_BYTES || 5 * 1024 * 1024);
   return Number.isFinite(configured) && configured > 0 ? configured : 5 * 1024 * 1024;
+}
+
+function maxScriptFetches(env) {
+  const configured = Number(env.MAX_SCRIPT_FETCHES || 45);
+  if (configured === 0) return 0;
+  return Number.isFinite(configured) && configured > 0 ? configured : 45;
 }
 
 function fetchCacheTtl(env) {

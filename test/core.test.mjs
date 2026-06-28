@@ -727,6 +727,31 @@ hostname = api.example.com
   assert(result.diagnostics.some((item) => item.code === "script-fetch-budget-exceeded"));
 });
 
+test("dedupes failed remote script fetches and caps unique fetch attempts", async () => {
+  const source = `
+#!name = Script Fetch Cap Mini
+[Script]
+http-response ^https:\\/\\/api\\.example\\.com\\/a script-path=https://example.com/missing.js, requires-body=true
+http-response ^https:\\/\\/api\\.example\\.com\\/b script-path=https://example.com/missing.js, requires-body=true
+http-response ^https:\\/\\/api\\.example\\.com\\/c script-path=https://example.com/over-cap.js, requires-body=true
+[MITM]
+hostname = api.example.com
+`;
+  const fetched = [];
+  const result = await convertModuleAsync(source, {
+    fetchScripts: true,
+    maxScriptFetches: 1,
+    fetchText: async (url) => {
+      fetched.push(url);
+      throw new Error("HTTP 404");
+    },
+  });
+  assert.deepEqual(fetched, ["https://example.com/missing.js"]);
+  assert(result.diagnostics.some((item) => item.code === "script-fetch-failed"));
+  assert(result.diagnostics.some((item) => item.code === "script-fetch-count-exceeded"));
+  assert(!result.diagnostics.some((item) => item.code === "script-source-missing"));
+});
+
 test("compat wrapper includes Env and async http lifecycle support", async () => {
   const source = `
 #!name = Env Async Mini

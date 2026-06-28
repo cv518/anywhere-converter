@@ -123,6 +123,7 @@ Cloudflare Worker 部署适合长期使用，可以生成在线转换页面、AP
 | `MAX_INPUT_BYTES` | 模块/规则集最大输入大小 | `524288` |
 | `MAX_SCRIPT_BYTES` | 单个远程脚本最大大小 | `1048576` |
 | `MAX_TOTAL_SCRIPT_BYTES` | 单次转换远程脚本总大小 | `5242880` |
+| `MAX_SCRIPT_FETCHES` | 单次转换最多下载多少个唯一远程脚本，`0` 表示不主动限制 | `45` |
 | `FETCH_CACHE_TTL_SECONDS` | 上游模块/脚本 fetch 缓存时间 | `900` |
 | `DYNAMIC_CACHE_TTL_SECONDS` | 动态订阅转换结果缓存时间 | `900` |
 | `RATE_LIMIT_PER_MINUTE` | 每分钟请求限制，`0` 表示关闭 | `60` |
@@ -340,6 +341,7 @@ Environment variables:
 | `MAX_INPUT_BYTES` | Maximum module/rule-set input size | `524288` |
 | `MAX_SCRIPT_BYTES` | Maximum size for one remote script | `1048576` |
 | `MAX_TOTAL_SCRIPT_BYTES` | Maximum total remote script bytes per conversion | `5242880` |
+| `MAX_SCRIPT_FETCHES` | Maximum unique remote scripts fetched per conversion; `0` disables the converter-side cap | `45` |
 | `FETCH_CACHE_TTL_SECONDS` | Upstream source/script fetch cache TTL | `900` |
 | `DYNAMIC_CACHE_TTL_SECONDS` | Dynamic subscription conversion cache TTL | `900` |
 | `RATE_LIMIT_PER_MINUTE` | Per-client rate limit; `0` disables it | `60` |

@@ -81,6 +81,9 @@ const result = await convertAnyAsync(source, {
   arguments: parseArgumentOverrides(args),
   scriptTextByURL: loadScriptTextOverrides(args),
   fetchScripts: args.fetchScripts == null ? true : args.fetchScripts === "1" || args.fetchScripts === "true",
+  maxScriptBytes: args.maxScriptBytes ? Number(args.maxScriptBytes) : undefined,
+  maxTotalScriptBytes: args.maxTotalScriptBytes ? Number(args.maxTotalScriptBytes) : undefined,
+  maxScriptFetches: args.maxScriptFetches ? Number(args.maxScriptFetches) : undefined,
   fetchText: async (url, options = {}) => {
     const response = await fetch(url, { redirect: "follow" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
