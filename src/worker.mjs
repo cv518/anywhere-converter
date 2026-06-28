@@ -8,36 +8,45 @@ const memoryDynamicCache = new Map();
 
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
-    if (request.method === "OPTIONS") return optionsResponse();
-    if (request.method === "GET" && url.pathname === "/") return htmlResponse(renderHome());
-    if (request.method === "GET" && url.pathname === "/health") return jsonResponse({
-      ok: true,
-      version: "0.1.0",
-      capabilities: ["url-input", "text-input", "argument-form", "script-fetch", "script-recovery", "native-js-lift", "aggressive-js-lift", "ruleset-conversion", "dynamic-subscription", "cache-bust-refresh", "browser-download", "fallback-snapshot"],
-    });
-    if (request.method === "POST" && url.pathname === "/api/inspect") {
-      const limited = await rateLimit(request, env, "inspect");
-      if (limited) return limited;
-      return handleInspect(request, env);
+    try {
+      const url = new URL(request.url);
+      if (request.method === "OPTIONS") return optionsResponse();
+      if (request.method === "GET" && url.pathname === "/") return htmlResponse(renderHome());
+      if (request.method === "GET" && url.pathname === "/health") return jsonResponse({
+        ok: true,
+        version: "0.1.0",
+        capabilities: ["url-input", "text-input", "argument-form", "script-fetch", "script-recovery", "native-js-lift", "aggressive-js-lift", "ruleset-conversion", "dynamic-subscription", "cache-bust-refresh", "browser-download", "fallback-snapshot"],
+      });
+      if (request.method === "POST" && url.pathname === "/api/inspect") {
+        const limited = await rateLimit(request, env, "inspect");
+        if (limited) return limited;
+        return await handleInspect(request, env);
+      }
+      if (request.method === "POST" && url.pathname === "/api/convert") {
+        const limited = await rateLimit(request, env, "convert");
+        if (limited) return limited;
+        return await handleConvert(request, env);
+      }
+      if (request.method === "GET" && url.pathname === "/sub/deeplink") {
+        const limited = await rateLimit(request, env, "subscribe");
+        if (limited) return limited;
+        return await handleDynamicDeeplink(request, env);
+      }
+      if (request.method === "GET" && url.pathname.startsWith("/sub/")) {
+        const limited = await rateLimit(request, env, "subscribe");
+        if (limited) return limited;
+        return await handleDynamicRuleFetch(request, env);
+      }
+      if (request.method === "GET" && url.pathname.startsWith("/r/")) return await handleRuleFetch(url, env);
+      return jsonResponse({ error: "not_found" }, 404);
+    } catch (error) {
+      const isSyntaxError = error instanceof SyntaxError;
+      const status = isSyntaxError ? 400 : 500;
+      return jsonResponse({
+        error: isSyntaxError ? "invalid_json" : "internal_error",
+        detail: error?.message || "Worker failed while handling the request.",
+      }, status);
     }
-    if (request.method === "POST" && url.pathname === "/api/convert") {
-      const limited = await rateLimit(request, env, "convert");
-      if (limited) return limited;
-      return handleConvert(request, env);
-    }
-    if (request.method === "GET" && url.pathname === "/sub/deeplink") {
-      const limited = await rateLimit(request, env, "subscribe");
-      if (limited) return limited;
-      return handleDynamicDeeplink(request, env);
-    }
-    if (request.method === "GET" && url.pathname.startsWith("/sub/")) {
-      const limited = await rateLimit(request, env, "subscribe");
-      if (limited) return limited;
-      return handleDynamicRuleFetch(request, env);
-    }
-    if (request.method === "GET" && url.pathname.startsWith("/r/")) return handleRuleFetch(url, env);
-    return jsonResponse({ error: "not_found" }, 404);
   },
 };
 

@@ -895,7 +895,7 @@ $done({ body: JSON.stringify(obj) });\`;
             includeSource: true,
           }),
         });
-        const json = await response.json();
+        const json = await readJSONResponse(response, "convert");
         if (!response.ok) throw new Error((json.detail || json.error || "convert failed"));
         lastJson = json;
         if (cacheBustValue) cacheBustValue = "";
@@ -919,7 +919,7 @@ $done({ body: JSON.stringify(obj) });\`;
       }
     });
 
-    fetch("/health").then((res) => res.json()).then((json) => {
+    fetch("/health").then((res) => readJSONResponse(res, "health")).then((json) => {
       healthEl.title = json.ok ? "Worker ready · 打开 Anywhere Hub" : "打开 Anywhere Hub";
     }).catch(() => {
       healthEl.title = "Worker health unavailable · 打开 Anywhere Hub";
@@ -1381,6 +1381,29 @@ $done({ body: JSON.stringify(obj) });\`;
       return text.length > 220 ? text.slice(0, 217) + "..." : text;
     }
 
+    async function readJSONResponse(response, label) {
+      const text = await response.text();
+      if (!text.trim()) return {};
+      try {
+        return JSON.parse(text);
+      } catch {
+        const summary = summarizeNonJSONResponse(text);
+        const status = response.status ? "HTTP " + response.status : "HTTP error";
+        throw new Error(label + " returned non-JSON response (" + status + "): " + summary);
+      }
+    }
+
+    function summarizeNonJSONResponse(text) {
+      const withoutTags = String(text || "")
+        .replace(/<script\\b[^>]*>[\\s\\S]*?<\\/script>/gi, " ")
+        .replace(/<style\\b[^>]*>[\\s\\S]*?<\\/style>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\\s+/g, " ")
+        .trim();
+      const summary = withoutTags || String(text || "").replace(/\\s+/g, " ").trim() || "empty response";
+      return summary.length > 220 ? summary.slice(0, 217) + "..." : summary;
+    }
+
     async function inspectModule(options = {}) {
       const quiet = options.quiet === true;
       const sourceOnly = options.sourceOnly === true;
@@ -1407,7 +1430,7 @@ $done({ body: JSON.stringify(obj) });\`;
             includeSource: true,
           }),
         });
-        const json = await response.json();
+        const json = await readJSONResponse(response, "inspect");
         if (!response.ok) throw new Error(json.detail || json.error || "inspect failed");
         if (json.source && sourceInput && !sourceInput.value.trim()) sourceInput.value = json.source;
         if (json.metadata?.name && !form.elements.name.value.trim()) form.elements.name.value = json.metadata.name;
