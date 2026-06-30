@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { convertAny, convertModule, convertModuleAsync, convertRuleSet, validateAnywhereOutput, internals } from "../src/core.mjs";
 
 test("converts stable routing and URL-REGEX reject rules", () => {
@@ -295,6 +296,108 @@ test("parses argument labels descriptions and select options", () => {
   assert.deepEqual(selectArg.options, ["WARN", "OFF", "ERROR", "INFO"]);
   assert.equal(selectArg.tag, "[调试] 日志等级");
   assert.equal(selectArg.desc, "选择输出等级");
+});
+
+test("preserves module arguments as Anywhere parameters when requested", async () => {
+  const source = `
+#!name = Parameter Mini
+[Argument]
+enabled = switch,true,false,tag=启用功能,desc=关闭后跳过脚本
+mode = select,"US","JP","DE",tag=地区,desc=选择地区
+api_token = input,"abc,123",tag=API Token,desc=可包含逗号
+[Script]
+http-response ^https:\\/\\/api\\.example\\.com\\/config script-path=https://example.com/config.js, requires-body=true, enable={enabled}, argument={mode}
+[MITM]
+hostname = api.example.com
+`;
+  const result = await convertModuleAsync(source, {
+    preserveParameters: true,
+    arguments: { mode: "JP", api_token: "live token" },
+    fetchText: async () => "$done({ body: $argument })",
+  });
+  const amrs = result.files.find((file) => file.type === "amrs");
+  assert.match(amrs.content, /\[Parameter\]\n/);
+  assert.match(amrs.content, /\[Rule\]\n/);
+  assert.match(amrs.content, /^1, 0, enabled, .*true, "\[true, false\]"$/m);
+  assert.match(amrs.content, /^1, 0, mode, .*, JP, "\[US, JP, DE\]"$/m);
+  assert.match(amrs.content, /^0, 0, api_token, "API Token", 可包含逗号, "live token"$/m);
+  assert.equal(result.preservedParameters.length, 3);
+  assert.deepEqual(validateAnywhereOutput(amrs), []);
+});
+
+test("maps unsupported argument names to stable Anywhere parameter names", () => {
+  const result = convertModule(`
+#!name = Bad Parameter Name Mini
+[Argument]
+bad-name = switch,true,false,tag=Bad
+中文 = input,value
+[URL Rewrite]
+^https:\\/\\/api\\.example\\.com\\/old reject
+[MITM]
+hostname = api.example.com
+`, { preserveParameters: true });
+  const amrs = result.files.find((file) => file.type === "amrs");
+  assert.match(amrs.content, /\[Parameter\]/);
+  assert.match(amrs.content, /^1, 0, bad_name, Bad, /m);
+  assert.match(amrs.content, /^0, 0, ZW, 中文, "来自上游 ""中文"" 参数", /m);
+  assert.equal(result.preservedParameters.length, 2);
+  assert(result.diagnostics.some((item) => item.code === "argument-parameter-name-mapped" && item.message.includes("bad-name")));
+  assert.deepEqual(validateAnywhereOutput(amrs), []);
+});
+
+test("preserves Surge metadata arguments with unicode names through aliases", async () => {
+  const source = `
+#!name = Unicode Metadata Argument Mini
+#!arguments=发现:0,首页自定义名称:0
+[Script]
+http-response ^https:\\/\\/api\\.example\\.com\\/tab script-path=https://example.com/tab.js, requires-body=true, argument=FX={{{发现}}}&SY_NAME={{{首页自定义名称}}}
+[MITM]
+hostname = api.example.com
+`;
+  const result = await convertModuleAsync(source, {
+    preserveParameters: true,
+    fetchScripts: true,
+    fetchText: async () => "$done({ body: $argument })",
+  });
+  const amrs = result.files.find((file) => file.type === "amrs");
+  assert.match(amrs.content, /\[Parameter\]/);
+  assert.equal(result.preservedParameters.length, 2);
+  assert.deepEqual(result.preservedParameters.map((item) => item.name), ["FX", "SYZDYMC"]);
+  assert.match(amrs.content, /^0, 0, FX, 发现, "来自上游 ""发现"" 参数", 0$/m);
+  assert.match(amrs.content, /^0, 0, SYZDYMC, 首页自定义名称, "来自上游 ""首页自定义名称"" 参数", 0$/m);
+  const line = amrs.content.split("\n").find((item) => item.startsWith("1, 100,"));
+  const wrapped = Buffer.from(internals.parseCsv(line)[3], "base64").toString("utf8");
+  assert.match(wrapped, /Anywhere\.params/);
+  assert.match(wrapped, /"发现":"FX"/);
+  assert.match(wrapped, /"首页自定义名称":"SYZDYMC"/);
+  assert.deepEqual(validateAnywhereOutput(amrs), []);
+});
+
+test("converts NetEase Cloud Music module with parameter preservation as a golden case", async () => {
+  const source = fs.readFileSync(new URL("fixtures/NetEaseCloudMusic.sgmodule", import.meta.url), "utf8");
+  let fetchCount = 0;
+  const result = await convertModuleAsync(source, {
+    preserveParameters: true,
+    fetchScripts: true,
+    fetchText: async () => {
+      fetchCount += 1;
+      return "$done({ body: $argument })";
+    },
+  });
+  const amrs = result.files.find((file) => file.type === "amrs");
+  const arrs = result.files.find((file) => file.type === "arrs");
+  assert.equal(fetchCount, 1);
+  assert.equal(result.preservedParameters.length, 25);
+  assert.equal(result.diagnostics.filter((item) => item.code === "argument-placeholder-skipped").length, 3);
+  assert.deepEqual(result.preservedParameters.slice(0, 6).map((item) => item.name), ["FX", "MY", "BJ", "GZ", "SS", "SYZDYMC"]);
+  assert(!result.preservedParameters.some((item) => /开关↓/.test(item.label)));
+  assert.match(amrs.content, /^0, 0, FX, 发现, "来自上游 ""发现"" 参数", 0$/m);
+  assert.match(amrs.content, /^0, 0, SYZDYMC, 首页自定义名称, "来自上游 ""首页自定义名称"" 参数", 0$/m);
+  assert.match(amrs.content, /^0, 0, HDTAB, 活动Tab, "来自上游 ""活动Tab"" 参数", 0$/m);
+  assert.equal(amrs.ruleCount, 12);
+  assert.equal(arrs.ruleCount, 5);
+  assert.deepEqual(validateAnywhereOutput(amrs), []);
+  assert.deepEqual(validateAnywhereOutput(arrs), []);
 });
 
 test("parses Surge metadata arguments and triple placeholders", () => {
@@ -836,6 +939,31 @@ hostname = api.example.com
     argument: "[true,false]",
     "requires-body": "true",
   });
+  assert.deepEqual(validateAnywhereOutput(amrs), []);
+});
+
+test("uses Anywhere.params for preserved script argument templates", async () => {
+  const source = `
+#!name = Runtime Script Argument Mini
+[Argument]
+tab=switch, true
+useractivity=switch, false
+[Script]
+http-response ^https:\\/\\/api\\.example\\.com\\/config script-path=https://example.com/arg.js, requires-body=true, argument=[{tab},{useractivity}]
+[MITM]
+hostname = api.example.com
+`;
+  const result = await convertModuleAsync(source, {
+    preserveParameters: true,
+    fetchScripts: true,
+    fetchText: async () => "$done({ body: $argument })",
+  });
+  const amrs = result.files.find((file) => file.type === "amrs");
+  const line = amrs.content.split("\n").find((item) => item.startsWith("1, 100,"));
+  const wrapped = Buffer.from(internals.parseCsv(line)[3], "base64").toString("utf8");
+  assert.match(wrapped, /Anywhere\.params/);
+  assert.match(wrapped, /var \$argument = __argumentTemplate\("\[\{tab\},\{useractivity\}\]"/);
+  assert(result.diagnostics.some((item) => item.code === "script-argument-parameter-runtime"));
   assert.deepEqual(validateAnywhereOutput(amrs), []);
 });
 

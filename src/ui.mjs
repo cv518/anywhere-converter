@@ -632,6 +632,13 @@ export function renderHome() {
               </div>
             </div>
             <label class="switchline">
+              <input type="checkbox" name="preserveParameters" value="true">
+              <span class="switch-copy">
+                <span>保留 Anywhere 参数配置</span>
+                <small>在 AMRS 写入 [Parameter]；原生规则使用当前值，兼容层脚本可读取 Anywhere.params。</small>
+              </span>
+            </label>
+            <label class="switchline">
               <input type="checkbox" name="fetchScripts" value="true" checked>
               <span class="switch-copy">
                 <span>下载并保留远程脚本</span>
@@ -728,6 +735,8 @@ export function renderHome() {
     let activeDiagnosticFilter = "action";
     let inspectTimer = 0;
     let cacheBustValue = "";
+    let sourceLoadedFromUrl = "";
+    let refreshTimer = 0;
 
     const savedTheme = localStorage.getItem("anywhere-converter-theme");
     const initialTheme = savedTheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
@@ -774,6 +783,7 @@ $done({ body: JSON.stringify(obj) });\`;
       form.elements.ruleSetRouting.value = "default";
       form.elements.url.value = "";
       form.elements.source.value = sampleSource;
+      sourceLoadedFromUrl = "";
       scriptOverridesEl.replaceChildren();
       addScriptOverride("https://example.com/demo-lift.js", sampleLiftScript);
       renderArgumentDefinitions({}, {});
@@ -787,12 +797,23 @@ $done({ body: JSON.stringify(obj) });\`;
     });
 
     sourceInput.addEventListener("input", () => {
+      sourceLoadedFromUrl = "";
       clearTimeout(inspectTimer);
       inspectTimer = setTimeout(() => {
         if (/^\\s*\\[Arguments?\\]/im.test(sourceInput.value)) inspectModule({ quiet: true, sourceOnly: true });
         else renderArgumentDefinitions({}, {});
       }, 450);
     });
+
+    urlInput.addEventListener("input", () => {
+      clearRemoteSourceIfUrlChanged();
+    });
+
+    for (const control of form.querySelectorAll('input[name="fetchScripts"], input[name="aggressive"], input[name="preserveParameters"], select[name="sourceKind"], select[name="ruleSetRouting"]')) {
+      control.addEventListener("change", () => scheduleReconvert());
+    }
+
+    argumentFieldsEl.addEventListener("change", () => scheduleReconvert());
 
     addScriptButton.addEventListener("click", () => {
       addScriptOverride();
@@ -807,6 +828,7 @@ $done({ body: JSON.stringify(obj) });\`;
       downloadFile.disabled = true;
       downloadAll.disabled = true;
       cacheBustValue = "";
+      sourceLoadedFromUrl = "";
       copyFile.disabled = true;
       copyJson.disabled = true;
       scriptOverridesEl.replaceChildren();
@@ -873,8 +895,10 @@ $done({ body: JSON.stringify(obj) });\`;
       preview.classList.remove("placeholder", "error");
       preview.textContent = "Converting...";
 
+      clearRemoteSourceIfUrlChanged();
       const raw = Object.fromEntries(new FormData(form).entries());
       const argumentOverrides = collectArgumentOverrides();
+      const source = sourceValueForRequest();
 
       try {
         const response = await fetch("/api/convert", {
@@ -883,11 +907,12 @@ $done({ body: JSON.stringify(obj) });\`;
           body: JSON.stringify({
             name: raw.name || "",
             url: raw.url || "",
-            source: raw.source || "",
+            source,
             sourceKind: raw.sourceKind || "auto",
             ruleSetRouting: raw.ruleSetRouting || "default",
             mode: raw.aggressive === "true" ? "aggressive" : "compat",
             arguments: argumentOverrides,
+            preserveParameters: raw.preserveParameters === "true",
             scriptTextByURL: collectScriptTextByURL(),
             fetchScripts: raw.fetchScripts === "true",
             cacheBust: cacheBustValue,
@@ -946,6 +971,7 @@ $done({ body: JSON.stringify(obj) });\`;
       if ((json.dynamicFiles || []).some((file) => /[?&]cacheBust=/.test(file.url || ""))) appendSignal("已刷新缓存");
       if (json.sourceKind === "ruleset") appendSignal("规则集");
       if (summary.validationErrors) appendSignal("验证错误 " + summary.validationErrors);
+      if ((json.preservedParameters || []).length) appendSignal("参数保留 " + json.preservedParameters.length);
       if (summary.nativeLiftCount) appendSignal("JS 原生化 " + summary.nativeLiftCount);
       if (summary.compatScriptCount) appendSignal("兼容层脚本 " + summary.compatScriptCount);
       for (const reason of summary.sampleReasons || []) appendSignal(signalLabel(reason));
@@ -990,6 +1016,7 @@ $done({ body: JSON.stringify(obj) });\`;
       const firstFile = (json.files || []).find((file) => file.content);
       if (json.source && sourceInput && !sourceInput.value.trim()) {
         sourceInput.value = json.source;
+        sourceLoadedFromUrl = json.sourceUrl || urlInput.value || "";
       }
       preview.classList.remove("placeholder", "error");
       if (firstFile) showFile(firstFile);
@@ -1404,10 +1431,37 @@ $done({ body: JSON.stringify(obj) });\`;
       return summary.length > 220 ? summary.slice(0, 217) + "..." : summary;
     }
 
+    function normalizeSourceUrl(value) {
+      return String(value || "").trim();
+    }
+
+    function clearRemoteSourceIfUrlChanged() {
+      const currentUrl = normalizeSourceUrl(urlInput.value);
+      if (!sourceLoadedFromUrl || !currentUrl || normalizeSourceUrl(sourceLoadedFromUrl) === currentUrl) return false;
+      sourceInput.value = "";
+      sourceLoadedFromUrl = "";
+      renderArgumentDefinitions({}, {});
+      return true;
+    }
+
+    function sourceValueForRequest() {
+      if (clearRemoteSourceIfUrlChanged()) return "";
+      return sourceInput.value || "";
+    }
+
+    function scheduleReconvert() {
+      if (!lastJson) return;
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        if (!submit.disabled) form.requestSubmit();
+      }, 120);
+    }
+
     async function inspectModule(options = {}) {
       const quiet = options.quiet === true;
       const sourceOnly = options.sourceOnly === true;
-      const source = sourceInput.value || "";
+      if (!sourceOnly) clearRemoteSourceIfUrlChanged();
+      const source = sourceOnly ? (sourceInput.value || "") : sourceValueForRequest();
       const url = sourceOnly ? "" : (urlInput.value || "");
       if (!source.trim() && !url.trim()) {
         renderArgumentDefinitions({}, {});
@@ -1432,7 +1486,10 @@ $done({ body: JSON.stringify(obj) });\`;
         });
         const json = await readJSONResponse(response, "inspect");
         if (!response.ok) throw new Error(json.detail || json.error || "inspect failed");
-        if (json.source && sourceInput && !sourceInput.value.trim()) sourceInput.value = json.source;
+        if (json.source && sourceInput && !sourceInput.value.trim()) {
+          sourceInput.value = json.source;
+          sourceLoadedFromUrl = json.sourceUrl || url || "";
+        }
         if (json.metadata?.name && !form.elements.name.value.trim()) form.elements.name.value = json.metadata.name;
         if (json.sourceKind && form.elements.sourceKind.value === "auto") {
           signalsEl.append(chip(json.sourceKind === "ruleset" ? "规则集" : "模块"));

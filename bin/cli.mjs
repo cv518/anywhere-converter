@@ -79,6 +79,7 @@ const result = await convertAnyAsync(source, {
   sourceKind: args.sourceKind,
   ruleSetRouting: args.ruleSetRouting,
   arguments: parseArgumentOverrides(args),
+  preserveParameters: args.preserveParameters === true || args.preserveParameters === "1" || args.preserveParameters === "true",
   scriptTextByURL: loadScriptTextOverrides(args),
   fetchScripts: args.fetchScripts == null ? true : args.fetchScripts === "1" || args.fetchScripts === "true",
   maxScriptBytes: args.maxScriptBytes ? Number(args.maxScriptBytes) : undefined,

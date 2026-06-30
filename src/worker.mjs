@@ -97,6 +97,7 @@ async function handleConvert(request, env) {
     sourceKind: input.sourceKind,
     ruleSetRouting: input.ruleSetRouting,
     arguments: isPlainObject(input.arguments) ? input.arguments : {},
+    preserveParameters: truthyInput(input.preserveParameters),
     scriptTextByURL,
     fetchScripts: input.fetchScripts == null ? true : input.fetchScripts === true || input.fetchScripts === "true" || input.fetchScripts === "1",
     maxScriptBytes: maxScriptBytes(env),
@@ -160,6 +161,7 @@ async function handleConvert(request, env) {
     mode: result.mode,
     argumentDefinitions: result.argumentDefinitions,
     arguments: result.arguments,
+    preservedParameters: result.preservedParameters,
     sourceUrl: input.sourceUrl || "",
     source: input.includeSource === true ? input.source : undefined,
     hostnames: result.hostnames,
@@ -228,6 +230,7 @@ async function handleDynamicDeeplink(request, env) {
     sourceKind: converted.sourceKind,
     ruleSetRouting: converted.ruleSetRouting,
     mode: converted.mode,
+    preserveParameters: converted.preserveParameters,
     cacheBust: converted.cacheBust,
   }, {});
   if (!dynamic.importUrl) return textResponse("Error: no rules to import", 404);
@@ -258,6 +261,7 @@ async function convertFromDynamicQuery(request, env) {
   const sourceKind = normalizeInputSourceKind(url.searchParams.get("sourceKind"), fetched.source);
   const ruleSetRouting = normalizeRuleSetRoutingParam(url.searchParams.get("ruleSetRouting")) || "default";
   const args = argumentsFromSearchParams(url.searchParams);
+  const preserveParameters = truthyInput(url.searchParams.get("preserveParameters") || url.searchParams.get("preserveArguments"));
   const cacheBust = normalizeCacheBust(url.searchParams.get("cacheBust") || url.searchParams.get("_"));
   const result = await convertAnyAsync(fetched.source, {
     name,
@@ -265,6 +269,7 @@ async function convertFromDynamicQuery(request, env) {
     sourceKind,
     ruleSetRouting,
     arguments: args,
+    preserveParameters,
     fetchScripts,
     maxScriptBytes: maxScriptBytes(env),
     maxTotalScriptBytes: maxTotalScriptBytes(env),
@@ -284,6 +289,7 @@ async function convertFromDynamicQuery(request, env) {
     ruleSetRouting: result.ruleSetRouting,
     fetchScripts,
     arguments: args,
+    preserveParameters,
     cacheBust,
   };
 }
@@ -317,7 +323,7 @@ function dynamicLinksForResult(request, result, input, scriptTextByURL) {
   const base = new URL(request.url);
   const requestedKind = String(input.sourceKind || "").toLowerCase();
   const sourceKind = requestedKind && requestedKind !== "auto" ? requestedKind : result.sourceKind;
-  const query = dynamicSearchParams(sourceUrl, input.name || "", input.arguments || {}, input.fetchScripts, input.mode, sourceKind, input.ruleSetRouting ?? result.ruleSetRouting, input.cacheBust);
+  const query = dynamicSearchParams(sourceUrl, input.name || "", input.arguments || {}, input.fetchScripts, input.mode, sourceKind, input.ruleSetRouting ?? result.ruleSetRouting, input.cacheBust, input.preserveParameters);
   const files = [];
   for (const file of result.files || []) {
     const path = dynamicPathForFile(file);
@@ -341,7 +347,7 @@ function dynamicPathForFile(file) {
   return "/sub/rule.arrs";
 }
 
-function dynamicSearchParams(sourceUrl, name, args, fetchScripts, mode, sourceKind, ruleSetRouting, cacheBust) {
+function dynamicSearchParams(sourceUrl, name, args, fetchScripts, mode, sourceKind, ruleSetRouting, cacheBust, preserveParameters) {
   const params = new URLSearchParams();
   params.set("url", sourceUrl);
   if (name) params.set("name", name);
@@ -353,6 +359,7 @@ function dynamicSearchParams(sourceUrl, name, args, fetchScripts, mode, sourceKi
   if (routing) params.set("ruleSetRouting", routing);
   const bust = normalizeCacheBust(cacheBust);
   if (bust) params.set("cacheBust", bust);
+  if (truthyInput(preserveParameters)) params.set("preserveParameters", "true");
   for (const [key, value] of Object.entries(args || {})) {
     if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(key)) continue;
     params.set(`argument.${key}`, String(value));
@@ -520,6 +527,11 @@ function uniqueDiagnosticCodes(items) {
 
 function isPlainObject(value) {
   return value && typeof value === "object" && !Array.isArray(value);
+}
+
+function truthyInput(value) {
+  if (value === true) return true;
+  return /^(?:1|true|yes|on)$/i.test(String(value || ""));
 }
 
 function normalizeScriptTextByURL(value, env) {

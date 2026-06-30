@@ -45,6 +45,9 @@ export function convertModule(source, options = {}) {
   const parsed = parseModule(source, options);
   const diagnostics = [...parsed.diagnostics];
   const argumentValues = resolveArgumentValues(parsed.arguments, options.arguments);
+  const preserveParameters = shouldPreserveParameters(options);
+  const referencedArguments = preserveParameters ? collectReferencedArguments(parsed.items) : new Set();
+  const parameterState = preserveParameters ? amrsParameterStateFromArguments(parsed.arguments, argumentValues, diagnostics, { referencedArguments }) : { parameters: [], nameMap: {} };
   if (mode === "aggressive") {
     diagnostics.push({ level: "warning", code: "aggressive-mode", message: "aggressive 模式是实验入口；protobuf/binary/复杂脚本仍需样本验证。", line: 0, source: "" });
   }
@@ -180,7 +183,7 @@ export function convertModule(source, options = {}) {
       break;
     }
     case "Script": {
-      const mapped = convertScriptLine(item, { ...options, mode });
+      const mapped = convertScriptLine(item, { ...options, mode, argumentValues, parameterNameMap: parameterState.nameMap });
       if (mapped?.rule) {
         addMitmMapped(mapped.rule, item.line, item.raw);
         for (const diagnostic of mapped.diagnostics || []) {
@@ -206,13 +209,14 @@ export function convertModule(source, options = {}) {
   mitmRules = mergeIdenticalScriptSourcesByPhase(mitmRules, diagnostics);
   mitmRules = mergeScriptDispatchersByPhase(mitmRules, diagnostics);
   mitmRules = mergeGeneratedHeaderPreprocessRules(mitmRules, diagnostics);
+  const parameters = parameterState.parameters;
   const files = [];
 
   if (mitmRules.length) {
     files.push({
       name: filenameFromName(name, ".amrs"),
       type: "amrs",
-      content: emitAmrs(name, hostnames, mitmRules),
+      content: emitAmrs(name, hostnames, mitmRules, parameters),
       ruleCount: mitmRules.length,
     });
   }
@@ -232,6 +236,7 @@ export function convertModule(source, options = {}) {
     metadata: parsed.metadata,
     argumentDefinitions: parsed.arguments,
     arguments: argumentValues,
+    preservedParameters: parameters,
     mode,
     hostnames,
     files,
@@ -496,7 +501,7 @@ function parseArgumentLine(line, rawLine = "", lineNumber = 0) {
   const split = splitFirst(line, "=");
   if (!split) return null;
   const name = split[0].trim();
-  if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(name)) return null;
+  if (!name || /[{},]/.test(name)) return null;
   const fields = parseCsv(split[1]);
   const type = String(fields[0] || "string").trim().toLowerCase();
   const knownType = /^(?:switch|input|text|string|number|select|checkbox)$/i.test(type);
@@ -578,6 +583,174 @@ function stripWrappingQuotes(value) {
   return text;
 }
 
+function shouldPreserveParameters(options = {}) {
+  const value = options.preserveParameters ?? options.preserveArguments ?? options.keepArguments;
+  if (value === true) return true;
+  return /^(?:1|true|yes|on)$/i.test(String(value || ""));
+}
+
+function amrsParameterStateFromArguments(argumentDefinitions = {}, argumentValues = {}, diagnostics = [], options = {}) {
+  const parameters = [];
+  const nameMap = {};
+  const seen = new Set();
+  const referencedArguments = options.referencedArguments || new Set();
+  const entries = Object.values(argumentDefinitions || {}).sort((a, b) => (a.line || 0) - (b.line || 0));
+  for (let index = 0; index < entries.length; index += 1) {
+    const definition = entries[index];
+    const sourceName = String(definition?.name || "").trim();
+    if (!sourceName || seen.has(sourceName)) continue;
+    seen.add(sourceName);
+    if (shouldSkipParameterPlaceholder(definition, referencedArguments)) {
+      diagnostics.push({
+        level: "info",
+        code: "argument-placeholder-skipped",
+        message: `参数 ${sourceName} 看起来是分组占位说明，未写入 Anywhere Parameter。`,
+        line: definition.line || 0,
+        source: definition.raw || "",
+      });
+      continue;
+    }
+    const name = safeAnywhereParameterName(sourceName, index, nameMap);
+    nameMap[sourceName] = name;
+    if (name !== sourceName) {
+      diagnostics.push({
+        level: "info",
+        code: "argument-parameter-name-mapped",
+        message: `参数 ${sourceName} 已映射为 Anywhere 参数名 ${name}。`,
+        line: definition.line || 0,
+        source: definition.raw || "",
+      });
+    }
+    const type = String(definition.type || "string").toLowerCase();
+    const currentValue = Object.prototype.hasOwnProperty.call(argumentValues || {}, sourceName)
+      ? argumentValues[sourceName]
+      : definition.defaultValue;
+    const label = definition.tag || sourceName;
+    const description = parameterDescription(definition.desc || "", name !== sourceName ? sourceName : "");
+    const defaultValue = stringifyParameterValue(currentValue);
+    if (type === "select") {
+      const options = ensureParameterOptions(definition.options || [], defaultValue);
+      if (!options.length) {
+        parameters.push({ type: 0, dataType: 0, name, label, description, defaultValue, options: [] });
+      } else {
+        parameters.push({ type: 1, dataType: 0, name, label, description, defaultValue: options.includes(defaultValue) ? defaultValue : options[0], options });
+      }
+    } else if (type === "switch" || type === "checkbox") {
+      const normalized = argumentEnabled(currentValue) ? "true" : "false";
+      parameters.push({ type: 1, dataType: 0, name, label, description, defaultValue: normalized, options: ["true", "false"] });
+    } else {
+      parameters.push({ type: 0, dataType: 0, name, label, description, defaultValue, options: [] });
+    }
+  }
+  return { parameters, nameMap };
+}
+
+function collectReferencedArguments(items = []) {
+  const out = new Set();
+  for (const item of items || []) {
+    const text = `${item?.text || ""}\n${item?.raw || ""}`;
+    for (const match of text.matchAll(/\{\{\{\s*([^{}\s][^{}]*?)\s*\}\}\}|\{\{\s*([^{}\s][^{}]*?)\s*\}\}|\{\s*([^{}\s][^{}]*?)\s*\}/g)) {
+      const name = String(match[1] || match[2] || match[3] || "").trim();
+      if (name) out.add(name);
+    }
+    for (const match of text.matchAll(/\b(?:enable|argument)\s*=\s*([^,\s]+)/gi)) {
+      const value = String(match[1] || "");
+      for (const nested of value.matchAll(/(?:^|[?&])([^=&{}]+)=\{\{\{\s*([^{}]+?)\s*\}\}\}|(?:^|[?&])([^=&{}]+)=\{\s*([^{}]+?)\s*\}/g)) {
+        const name = String(nested[2] || nested[4] || "").trim();
+        if (name) out.add(name);
+      }
+    }
+  }
+  return out;
+}
+
+function shouldSkipParameterPlaceholder(definition, referencedArguments = new Set()) {
+  const name = String(definition?.name || "").trim();
+  if (!name || referencedArguments.has(name)) return false;
+  const value = stringifyParameterValue(definition?.defaultValue).trim();
+  const label = String(definition?.tag || name).trim();
+  return /^(?:-+|_+|—+|=+)$/.test(value) && /(?:↓|分组|标题|说明|开关)\s*$/u.test(label);
+}
+
+function safeAnywhereParameterName(sourceName, index, nameMap = {}) {
+  const raw = String(sourceName || "").trim();
+  const direct = raw.replace(/-/g, "_");
+  let base = /^[A-Za-z_][A-Za-z0-9_]*$/.test(direct) ? direct : pinyinInitialParameterName(raw);
+  if (!base) base = `ARG_${stableNameHash(raw).toUpperCase()}`;
+  if (!/^[A-Za-z_]/.test(base)) base = `arg_${base}`;
+  base = base.replace(/[^A-Za-z0-9_]/g, "_");
+  let name = base || `arg_${index + 1}`;
+  const used = new Set(Object.values(nameMap || {}));
+  let suffix = 2;
+  while (used.has(name)) {
+    name = `${base}_${suffix}`;
+    suffix += 1;
+  }
+  return name;
+}
+
+function parameterDescription(description, sourceName) {
+  const note = sourceName ? `来自上游 "${sourceName}" 参数` : "";
+  if (description && note) return `${description}；${note}`;
+  return description || note;
+}
+
+function pinyinInitialParameterName(value) {
+  let out = "";
+  for (const char of String(value || "")) {
+    if (/[A-Za-z]/.test(char)) {
+      out += char.toUpperCase();
+    } else if (/[0-9_]/.test(char)) {
+      out += char;
+    } else {
+      out += pinyinInitialForChar(char);
+    }
+  }
+  return out.replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function pinyinInitialForChar(char) {
+  if (!/[\u3400-\u9fff]/u.test(char)) return "";
+  const boundaries = [
+    ["A", "阿"], ["B", "八"], ["C", "嚓"], ["D", "咑"], ["E", "妸"], ["F", "发"],
+    ["G", "旮"], ["H", "哈"], ["J", "讥"], ["K", "咔"], ["L", "垃"], ["M", "妈"],
+    ["N", "拏"], ["O", "噢"], ["P", "妑"], ["Q", "七"], ["R", "呥"], ["S", "仨"],
+    ["T", "他"], ["W", "哇"], ["X", "夕"], ["Y", "丫"], ["Z", "帀"],
+  ];
+  for (let index = boundaries.length - 1; index >= 0; index -= 1) {
+    if (char.localeCompare(boundaries[index][1], "zh-Hans-CN") >= 0) return boundaries[index][0];
+  }
+  return "";
+}
+
+function stableNameHash(value) {
+  let hash = 2166136261;
+  for (const char of String(value || "")) {
+    hash ^= char.codePointAt(0);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+function stringifyParameterValue(value) {
+  if (value === true) return "true";
+  if (value === false) return "false";
+  return String(value ?? "");
+}
+
+function ensureParameterOptions(values = [], defaultValue = "") {
+  const out = [];
+  const seen = new Set();
+  for (const value of values) {
+    const text = stringifyParameterValue(value);
+    if (seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+  }
+  if (defaultValue && !seen.has(defaultValue)) out.push(defaultValue);
+  return out;
+}
+
 function resolveArgumentValues(argumentDefinitions = {}, overrides = {}) {
   const out = {};
   for (const [name, definition] of Object.entries(argumentDefinitions || {})) {
@@ -604,6 +777,8 @@ function resolveItemArguments(item, argumentValues) {
     enabled: true,
     item: {
       ...item,
+      originalText: item.text,
+      originalRaw: item.raw,
       text: substituteArguments(item.text, argumentValues),
       raw: substituteArguments(item.raw, argumentValues),
     },
@@ -780,13 +955,18 @@ function isRuleSetPolicyAction(action = "") {
   return routeForAction(text) != null || isRejectAction(text);
 }
 
-export function emitAmrs(name, hostnames, rules) {
+export function emitAmrs(name, hostnames, rules, parameters = []) {
   const lines = [
     `# Generated by Anywhere Loon/Surge converter`,
     `name = ${name}`,
   ];
   if (hostnames.length) lines.push(`hostname = ${hostnames.join(", ")}`);
   lines.push("");
+  if (parameters.length) {
+    lines.push("[Parameter]");
+    for (const parameter of parameters) lines.push(emitAmrsParameter(parameter));
+    lines.push("", "[Rule]");
+  }
   for (const rule of rules) lines.push(emitMitmRule(rule));
   return lines.join("\n").trimEnd() + "\n";
 }
@@ -807,9 +987,20 @@ export function validateAnywhereOutput(file) {
   const lines = String(file.content || "").replace(/\r\n?/g, "\n").split("\n");
   const isAmrs = file.name?.endsWith(".amrs") || file.type === "amrs";
   const isArrs = file.name?.endsWith(".arrs") || file.type === "arrs";
+  let amrsSection = "rule";
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i].trim();
     if (!raw || raw.startsWith("#") || raw.startsWith("//")) continue;
+    if (isAmrs) {
+      const section = raw.match(/^\[([^\]]+)\]$/);
+      if (section) {
+        const name = section[1].trim().toLowerCase();
+        if (name === "parameter") amrsSection = "parameter";
+        else if (name === "rule") amrsSection = "rule";
+        else diagnostics.push({ level: "warning", code: "unknown-amrs-section", line: i + 1, message: `当前 Anywhere 可能会忽略 [${section[1]}] section。` });
+        continue;
+      }
+    }
     const equalIndex = raw.indexOf("=");
     const commaIndex = raw.indexOf(",");
     const headerLike = equalIndex >= 0 && (commaIndex < 0 || equalIndex < commaIndex);
@@ -820,7 +1011,7 @@ export function validateAnywhereOutput(file) {
       continue;
     }
     if (isAmrs) {
-      const result = validateAmrsRuleLine(raw);
+      const result = amrsSection === "parameter" ? validateAmrsParameterLine(raw) : validateAmrsRuleLine(raw);
       if (result) diagnostics.push({ ...result, line: i + 1 });
     } else if (isArrs) {
       const result = validateArrsRuleLine(raw);
@@ -1157,6 +1348,11 @@ function convertHeaderRewriteLine(item) {
 function convertScriptLine(item, options) {
   const parsed = parseScriptLine(item.text);
   if (!parsed) return null;
+  if (shouldPreserveParameters(options) && item.originalText) {
+    const originalParsed = parseScriptLine(item.originalText);
+    const runtimeArgument = runtimeArgumentTemplate(originalParsed?.argument, options.argumentValues, options.parameterNameMap);
+    if (runtimeArgument) parsed.runtimeArgument = runtimeArgument;
+  }
   const diagnostics = [];
   const source = parsed.inlineScript || (parsed.path ? options.scriptTextByURL?.[parsed.path] : "");
   if (!options.fetchScripts && !source) {
@@ -1210,6 +1406,9 @@ function convertScriptLine(item, options) {
       diagnostics.push({ level: "info", code: "script-respond-lift", message: "已将固定 $done({ response }) 脚本提升为轻量 Anywhere.respond request script。" });
       return { rule: respond, diagnostics };
     }
+  }
+  if (parsed.runtimeArgument) {
+    diagnostics.push({ level: "info", code: "script-argument-parameter-runtime", message: "脚本 $argument 已保留为 Anywhere.params 运行时参数模板。" });
   }
   const wrapped = wrapLoonSurgeScript(source, parsed);
   diagnostics.push({ level: "warning", code: "script-compat-layer", message: "脚本已用轻量 Loon/Surge 兼容层包装；复杂网络请求、二进制/protobuf 或平台 API 仍需实机验证。" });
@@ -1269,6 +1468,27 @@ function parseLegacyScriptTokens(tokens) {
     };
   }
   return { path: "", requiresBody: false };
+}
+
+function runtimeArgumentTemplate(template, argumentValues = {}, parameterNameMap = {}) {
+  const text = String(template || "");
+  if (!text) return null;
+  const names = [...text.matchAll(/\{\{\{([^{}]+)\}\}\}|\{\{([^{}]+)\}\}|\{([A-Za-z_][A-Za-z0-9_]*)\}/g)]
+    .map((match) => match[1] || match[2] || match[3])
+    .map((name) => String(name || "").trim())
+    .filter(Boolean);
+  if (!names.length) return null;
+  const fallback = {};
+  const params = {};
+  for (const name of names) {
+    if (Object.prototype.hasOwnProperty.call(argumentValues || {}, name)) {
+      fallback[name] = stringifyParameterValue(argumentValues[name]);
+    }
+    if (Object.prototype.hasOwnProperty.call(parameterNameMap || {}, name)) {
+      params[name] = parameterNameMap[name];
+    }
+  }
+  return { template: text, fallback, params };
 }
 
 function normalizeScriptTimeout(raw) {
@@ -2167,6 +2387,23 @@ function wrapLoonSurgeScript(source, parsed) {
   const encodedSource = base64(source);
   const phase = parsed.phase === 0 ? "request" : "response";
   const argument = String(parsed.argument || "");
+  const runtimeArgument = parsed.runtimeArgument || null;
+  const argumentHelper = runtimeArgument ? `  function __argumentTemplate(template, fallback) {
+    var params = arguments.length > 2 && arguments[2] ? arguments[2] : {};
+    return String(template || "").replace(/\\{\\{\\{([^{}]+)\\}\\}\\}|\\{\\{([^{}]+)\\}\\}|\\{([A-Za-z_][A-Za-z0-9_]*)\\}/g, function (match, tripleName, doubleName, singleName) {
+      var name = tripleName || doubleName || singleName;
+      name = String(name || "").trim();
+      var paramName = Object.prototype.hasOwnProperty.call(params, name) ? params[name] : name;
+      var value;
+      try { value = Anywhere.params && Anywhere.params.get(String(paramName)); } catch (_) { value = undefined; }
+      if (value === undefined || value === null) value = fallback && Object.prototype.hasOwnProperty.call(fallback, name) ? fallback[name] : undefined;
+      return value === undefined || value === null ? match : String(value);
+    });
+  }
+` : "";
+  const argumentExpression = runtimeArgument
+    ? `__argumentTemplate(${JSON.stringify(runtimeArgument.template)}, ${JSON.stringify(runtimeArgument.fallback || {})}, ${JSON.stringify(runtimeArgument.params || {})})`
+    : JSON.stringify(argument);
   const timeoutMs = parsed.timeoutMs || 4500;
   const binaryBodyMode = parsed.binaryBodyMode === true;
   return `async function process(ctx) {
@@ -2350,7 +2587,7 @@ function wrapLoonSurgeScript(source, parsed) {
   var $response = { status: ctx.status || 200, statusCode: ctx.status || 200, headers: __headersObject(ctx.headers), body: __binaryBodyMode ? __bodyBytes : __bodyText, bodyBytes: __bodyBytes };
   var $environment = { system: "Anywhere", "surge-version": "0", "loon-version": "0" };
   var $loon = "Anywhere";
-  var $argument = ${JSON.stringify(argument)};
+${argumentHelper}  var $argument = ${argumentExpression};
   var $persistentStore = {
     read: function (key) { return Anywhere.store.getString(String(key), true) || null; },
     write: function (value, key) { Anywhere.store.set(String(key), Anywhere.codec.utf8.encode(String(value == null ? "" : value)), true); return true; }
@@ -2894,6 +3131,21 @@ function emitMitmRule(rule) {
   return [rule.phase, rule.op, rule.pattern, ...rule.fields].map(csvQuote).join(", ");
 }
 
+function emitAmrsParameter(parameter) {
+  const fields = [
+    parameter.type,
+    parameter.dataType,
+    parameter.name,
+    parameter.label,
+    parameter.description,
+    parameter.defaultValue,
+  ];
+  if (parameter.type === 1 && parameter.options?.length) {
+    fields.push(`[${parameter.options.map((value) => stringifyParameterValue(value)).join(", ")}]`);
+  }
+  return fields.map(csvQuote).join(", ");
+}
+
 function buildReport({ converted, skipped, files, diagnostics }) {
   const hasError = diagnostics.some((item) => item.level === "error");
   const hasSampleRequired = diagnostics.some((item) => item.code === "sample-required-pattern" || /sample-required/.test(item.code || ""));
@@ -3341,6 +3593,29 @@ function validateAmrsRuleLine(line) {
   }
   if ((op === 100 || op === 101) && argCount !== 1) return { level: "error", code: "invalid-script", message: "script 需要 base64。" };
   return null;
+}
+
+function validateAmrsParameterLine(line) {
+  const fields = parseCsv(line);
+  if (fields.length < 6 || fields.length > 7) return { level: "error", code: "invalid-parameter", message: "Parameter 需要 6 或 7 个字段。" };
+  const type = Number(fields[0]);
+  const dataType = Number(fields[1]);
+  const name = fields[2]?.trim();
+  if (![0, 1].includes(type)) return { level: "error", code: "invalid-parameter-type", message: "Parameter type 必须是 0 或 1。" };
+  if (dataType !== 0) return { level: "error", code: "invalid-parameter-data-type", message: "Parameter data-type 当前必须是 0。" };
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name || "")) return { level: "error", code: "invalid-parameter-name", message: "Parameter name 仅支持字母、数字、下划线且不能以数字开头。" };
+  if (type === 1) {
+    if (fields.length !== 7) return { level: "error", code: "invalid-parameter-options", message: "Picker Parameter 需要 options 字段。" };
+    const options = parseAmrsParameterOptions(fields[6]);
+    if (!options.length) return { level: "error", code: "invalid-parameter-options", message: "Picker Parameter 至少需要一个 option。" };
+  }
+  return null;
+}
+
+function parseAmrsParameterOptions(value) {
+  const text = String(value || "").trim();
+  if (!text.startsWith("[") || !text.endsWith("]")) return [];
+  return text.slice(1, -1).split(",").map((item) => item.trim()).filter(Boolean);
 }
 
 function validateArrsRuleLine(line) {
