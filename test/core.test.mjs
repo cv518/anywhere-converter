@@ -423,7 +423,7 @@ hostname = %APPEND% music.163.com, interface.music.163.com, interface3.music.163
   assert.match(amrs.content, /^0, 0, FX, 发现, "来自上游 ""发现"" 参数", 0$/m);
   assert.match(amrs.content, /^0, 0, SYZDYMC, 首页自定义名称, "来自上游 ""首页自定义名称"" 参数", 0$/m);
   assert.match(amrs.content, /^0, 0, HDTAB, 活动Tab, "来自上游 ""活动Tab"" 参数", 0$/m);
-  assert.equal(amrs.ruleCount, 12);
+  assert.equal(amrs.ruleCount, 10);
   assert.equal(arrs.ruleCount, 5);
   assert.deepEqual(validateAnywhereOutput(amrs), []);
   assert.deepEqual(validateAnywhereOutput(arrs), []);
@@ -637,7 +637,8 @@ hostname = mobile.yangkeduo.com
 `);
   const amrs = result.files.find((file) => file.type === "amrs");
   assert.match(amrs.content, /0, 2, \^https/);
-  assert.match(amrs.content, /0, 1, \^https/);
+  assert.doesNotMatch(amrs.content, /0, 1, \^https.*accept-encoding/);
+  assert.doesNotMatch(amrs.content, /accept-encoding, identity/);
   const bodyReplaceLine = amrs.content.split("\n").find((line) => line.startsWith("1, 5,"));
   assert.deepEqual(internals.parseCsv(bodyReplaceLine).slice(3), ["replace-recursive", "list", "[]"]);
   assert.deepEqual(validateAnywhereOutput(amrs), []);
@@ -700,7 +701,7 @@ hostname = api.example.com
   assert.deepEqual(validateAnywhereOutput(amrs), []);
 });
 
-test("merges generated accept-encoding preprocess headers", () => {
+test("merges generated cache preprocess headers", () => {
   const result = convertModule(`
 #!name = Header Merge Mini
 [Rewrite]
@@ -712,9 +713,9 @@ hostname = api.example.com
   const amrs = result.files.find((file) => file.type === "amrs");
   const deleteHeaders = amrs.content.split("\n").filter((line) => line.startsWith("0, 2,"));
   const addHeaders = amrs.content.split("\n").filter((line) => line.startsWith("0, 1,"));
-  assert.equal(deleteHeaders.length, 3);
-  assert.equal(addHeaders.length, 1);
-  assert(deleteHeaders.some((line) => line.includes("accept-encoding")));
+  assert.equal(deleteHeaders.length, 2);
+  assert.equal(addHeaders.length, 0);
+  assert(!amrs.content.includes("accept-encoding"));
   assert(deleteHeaders.some((line) => line.includes("if-none-match")));
   assert(deleteHeaders.some((line) => line.includes("if-modified-since")));
   assert(deleteHeaders.every((line) => /\^https:\/\/api\\\.example\\\.com\/\(\?:a\|b\)/.test(line)));
@@ -762,8 +763,8 @@ hostname = api.example.com
   });
   const amrs = result.files.find((file) => file.type === "amrs");
   const lines = amrs.content.split("\n");
-  assert(lines.some((line) => line.startsWith("0, 2,") && line.includes("accept-encoding")));
-  assert(lines.some((line) => line.startsWith("0, 1,") && line.includes("accept-encoding, identity")));
+  assert(!lines.some((line) => line.startsWith("0, 2,") && line.includes("accept-encoding")));
+  assert(!lines.some((line) => line.startsWith("0, 1,") && line.includes("accept-encoding, identity")));
   assert(lines.some((line) => line.startsWith("0, 2,") && line.includes("if-none-match")));
   assert(lines.some((line) => line.startsWith("0, 2,") && line.includes("if-modified-since")));
   assert.deepEqual(validateAnywhereOutput(amrs), []);

@@ -3936,8 +3936,6 @@ function needsResponseBodyPreprocess(rule) {
 
 function responseBodyPreprocessRules(pattern) {
   return [
-    { phase: 0, op: 2, pattern, fields: ["accept-encoding"], generated: true },
-    { phase: 0, op: 1, pattern, fields: ["accept-encoding", "identity"], generated: true },
     { phase: 0, op: 2, pattern, fields: ["if-none-match"], generated: true },
     { phase: 0, op: 2, pattern, fields: ["if-modified-since"], generated: true },
   ];
