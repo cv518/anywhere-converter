@@ -110,6 +110,8 @@ Status:
 | request script mutating URL/header/method | blocked | blocked | Must be lifted to native rewrite/header. |
 | `$httpClient` | wrapped to `Anywhere.http` | sample-required | Parks current request and has body/time budgets. |
 | binary/protobuf script | wrapped, flagged | sample-required | See protobuf strategy. |
+| likely SSE / NDJSON / gRPC / stream response script | `op 100` compat layer + `script-buffered-stream-risk` | sample-required | Anywhere has native `op 101 stream-script`, but Loon/Surge response scripts usually expect whole-body `$response.body`. The generic converter warns instead of changing execution granularity. |
+| body-rule `Accept-Encoding` handling | native runtime clamp/decode | stable | Anywhere clamps only matching body-accessing requests and auto-decodes `gzip` / `deflate` / `br`; the converter does not emit synthetic `accept-encoding: identity` preprocess rules. |
 
 ## Arguments
 

@@ -1524,6 +1524,9 @@ function scanScriptRisk(source, parsed, rawLine) {
   if (parsed.argument && !/\$argument\b/.test(codeWithoutStrings)) {
     diagnostics.push({ level: "warning", code: "script-argument-unused", message: "规则声明了脚本参数，但源码没有读取 $argument；对应参数开关可能不会影响脚本行为。" });
   }
+  if (isLikelyStreamingScriptTarget(parsed, source)) {
+    diagnostics.push({ level: "warning", code: "script-buffered-stream-risk", message: "脚本看起来命中 SSE/NDJSON/gRPC 或长流接口；通用转换器保留为 Anywhere op 100 缓冲脚本，若上游依赖流式处理，应手工改为 op 101 stream-script 并实机验证。" });
+  }
   if (parsed.binaryBodyMode || /protobuf|Uint8Array|ArrayBuffer|DataView/i.test(source) || /binary-body-mode\s*=\s*1/i.test(rawLine)) {
     diagnostics.push({ level: "warning", code: "script-binary-sample-required", message: "脚本涉及二进制/protobuf，已保留但需要样本和实机验证。" });
   }
@@ -1531,6 +1534,16 @@ function scanScriptRisk(source, parsed, rawLine) {
     diagnostics.push({ level: "warning", code: "script-large", message: "脚本体积超过 512 KiB，可能影响 Worker 转换和 Anywhere 运行性能。" });
   }
   return diagnostics;
+}
+
+function isLikelyStreamingScriptTarget(parsed, source = "") {
+  if (!parsed || parsed.phase !== 1) return false;
+  const haystack = [
+    parsed.pattern,
+    parsed.path,
+    String(source || "").slice(0, 4096),
+  ].join("\n").replace(/\\\//g, "/").toLowerCase();
+  return /text\/event-stream|event-stream|application\/(?:x-)?ndjson|jsonl|stream\+json|json-seq|(?:^|[/?&])sse(?:[/?&#\s]|$)|(?:^|[/?&])events?(?:[/?&#\s]|$)|(?:^|[/?&])stream(?:[/?&#\s]|$)|\bgrpc\b/.test(haystack);
 }
 
 function liftScriptToNativeRules(source, parsed) {

@@ -749,6 +749,24 @@ hostname = api.example.com
   assert.deepEqual(validateAnywhereOutput(amrs), []);
 });
 
+test("flags likely streaming response scripts without converting them to stream-script", async () => {
+  const result = await convertModuleAsync(`
+#!name = Stream Risk Mini
+[Script]
+http-response ^https:\\/\\/api\\.example\\.com\\/events script-path=https://example.com/events.js, requires-body=true
+[MITM]
+hostname = api.example.com
+`, {
+    fetchScripts: true,
+    fetchText: async () => "$done({ body: $response.body.replace(/token/g, '***') })",
+  });
+  const amrs = result.files.find((file) => file.type === "amrs");
+  assert(result.diagnostics.some((item) => item.code === "script-buffered-stream-risk"));
+  assert.match(amrs.content, /^1, 100, /m);
+  assert.doesNotMatch(amrs.content, /^1, 101, /m);
+  assert.deepEqual(validateAnywhereOutput(amrs), []);
+});
+
 test("response scripts requiring body remove conditional cache headers", async () => {
   const source = `
 #!name = Response Body Script Cache Mini
