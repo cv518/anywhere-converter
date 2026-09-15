@@ -22,7 +22,7 @@ RATE_LIMIT_PER_MINUTE = "60"
 # Bind a KV namespace for persistent /r/:hash/:filename rule URLs in production.
 [[kv_namespaces]]
 binding = "CONVERTER_KV"
-id = "2edb1617cec0402b85b9aa41ebb1fd54"
+id = "cdc6dfdbd9904e33a2dc4c52a615439a"
 
 # Each anonymous Rule Studio workspace is serialized by a Durable Object.
 # `wrangler dev` works without this binding by using an in-memory local fallback.
